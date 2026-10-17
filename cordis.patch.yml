@@ -1,0 +1,7 @@
+# dsh bundle patch: inserts this plugin into a profile's layer stack.
+#
+# The theme document lives in `<DSH_HOME>/theme-studio/theme.json` and is edited
+# from Settings → 自定义主题; it is not loader config, so this entry carries none.
+- insert:
+    - id: dsh-custom-theme
+      name: 'dsh-custom-theme'

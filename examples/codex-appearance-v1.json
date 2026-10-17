@@ -1,0 +1,20 @@
+{
+  "codeThemeId": "everforest",
+  "theme": {
+    "accent": "#93b259",
+    "contrast": 45,
+    "fonts": {
+      "code": null,
+      "ui": null
+    },
+    "ink": "#5c6a72",
+    "opaqueWindows": false,
+    "semanticColors": {
+      "diffAdded": "#8da101",
+      "diffRemoved": "#f85552",
+      "skill": "#df69ba"
+    },
+    "surface": "#fdf6e3"
+  },
+  "variant": "light"
+}

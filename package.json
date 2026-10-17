@@ -1,0 +1,65 @@
+{
+  "name": "dsh-custom-theme",
+  "version": "0.5.1",
+  "description": "DSH 自定义主题：多套主题可新建与切换，配色、背景图、背景音乐、首屏立绘与多条文案（顺序或随机）都可修改。 · DSH Custom Theme: switchable themes with palettes, wallpaper, background music, hero artwork and multi-line copy.",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "author": "YOGEMOW",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/YOGEMOW/dsh-custom-theme.git"
+  },
+  "homepage": "https://github.com/YOGEMOW/dsh-custom-theme#readme",
+  "bugs": {
+    "url": "https://github.com/YOGEMOW/dsh-custom-theme/issues"
+  },
+  "icon": "./icon.svg",
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "theme",
+    "appearance",
+    "custom-theme",
+    "wallpaper",
+    "background-music",
+    "codex",
+    "everforest",
+    "demiurge"
+  ],
+  "scripts": {
+    "test": "node tests/state.test.mjs && node tests/client.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-theme",
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ],
+      "platform": "web"
+    }
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./locale/*.json": "./locale/*.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client",
+    "locale",
+    "examples",
+    "tests",
+    "icon.svg",
+    "cordis.patch.yml",
+    "README.md"
+  ]
+}
