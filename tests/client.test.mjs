@@ -421,6 +421,12 @@ test('themes remember which agent presets activate them', () => {
   const links = model.normalizePresetLinks('one, two；three  one')
   assert.deepEqual(links, ['one', 'two', 'three'])
   assert.deepEqual(model.normalizePresetLinks(undefined), [])
+
+  // Checkbox toggling adds/removes one id and keeps the rest in order.
+  assert.deepEqual(model.togglePresetLink(['a'], 'B'), ['a', 'B'])
+  assert.deepEqual(model.togglePresetLink(['a', 'b'], 'A'), ['b'])
+  assert.equal(model.presetLinkLabel([{ id: 'a', name: 'Alpha' }], 'a'), 'Alpha')
+  assert.equal(model.presetLinkLabel([], 'zzz'), 'zzz')
 })
 
 test('mounts, registers the page and applies palette edits immediately', async () => {

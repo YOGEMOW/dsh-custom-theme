@@ -187,6 +187,53 @@ test('a boot wallpaper scrim is validated and injected', () => {
   assert.equal(invalid.boot.wallpaper.scrim, null)
 })
 
+test('the Host half serves the agent preset roster', async () => {
+  const routes = []
+  const ctx = {
+    get: (name) => (name === 'agentPresets'
+      ? {
+        list: async () => [
+          { id: 'standard', name: '标准模式', order: 0 },
+          { id: 'chat', name: '纯文本对话模式', order: 10 },
+        ],
+      }
+      : undefined),
+    on: () => () => {},
+    inject: (names, callback) => {
+      callback({
+        get: (name) => (name === 'webServer'
+          ? { register: (route) => { routes.push(route); return () => {} } }
+          : undefined),
+        effect: (callback) => callback(),
+      })
+    },
+  }
+  applyHost(ctx)
+  assert.equal(routes.length, 1)
+
+  const response = {
+    status: 0,
+    body: '',
+    headers: {},
+    writeHead(status, headers) {
+      this.status = status
+      this.headers = headers
+    },
+    end(body) {
+      this.body = body
+    },
+  }
+  await routes[0].handler(
+    { url: '/dsh-theme-studio/agent-presets', method: 'GET', headers: {} },
+    response,
+  )
+  assert.equal(response.status, 200)
+  const payload = JSON.parse(response.body)
+  assert.deepEqual(payload.presets.map((preset) => preset.id), ['standard', 'chat'])
+  assert.equal(payload.presets[0].name, '标准模式')
+  assert.equal(payload.presets[1].broken, false)
+})
+
 test('the Host half registers the route and the boot injection', async () => {
   // The boot injection reads the live document, which may already be customized
   // on the machine running the tests; point DSH_HOME at an empty directory so the

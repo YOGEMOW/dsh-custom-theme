@@ -594,6 +594,35 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     return match ?? null;
   }
 
+  /** Add or remove one preset id from a link list, keeping order stable. */
+  function togglePresetLink(links, presetId) {
+    const list = normalizePresetLinks(links);
+    if (typeof presetId !== "string" || presetId === "") return list;
+    const wanted = presetId.toLowerCase();
+    const found = list.some((entry) => entry.toLowerCase() === wanted);
+    return found ? list.filter((entry) => entry.toLowerCase() !== wanted) : [...list, presetId];
+  }
+
+  /** Display name for one linked preset id, falling back to the id itself. */
+  function presetLinkLabel(roster, presetId) {
+    const entry = Array.isArray(roster) ? roster.find((row) => row.id === presetId) : undefined;
+    return entry !== undefined && typeof entry.name === "string" && entry.name !== "" ? entry.name : presetId;
+  }
+
+  /** Fetch the Host's agent preset roster (id + display name). */
+  async function loadAgentPresets() {
+    const payload = await request("/agent-presets");
+    const presets = Array.isArray(payload.presets) ? payload.presets : [];
+    return presets
+      .filter((row) => row !== null && typeof row === "object" && typeof row.id === "string" && row.id !== "")
+      .map((row) => ({
+        id: row.id.slice(0, 120),
+        name: typeof row.name === "string" && row.name !== "" ? row.name.slice(0, 80) : row.id,
+        description: typeof row.description === "string" ? row.description.slice(0, 240) : "",
+        broken: row.broken === true,
+      }));
+  }
+
   /* ------------------------------------------------------------------ *
    * Palette and tokens
    * ------------------------------------------------------------------ */
@@ -968,30 +997,6 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     }).catch((error) => {
       if (generation !== saveGeneration) return;
       viewStore.patch({ saving: "error", error: error instanceof Error ? error.message : String(error) });
-    });
-  }
-
-  /** Text field for one theme's Agent-preset links, tolerant of in-progress typing. */
-  function PresetLinkField({ themeId, initial, placeholder, onChange }) {
-    const [draft, setDraft] = useState(initial);
-    const [focused, setFocused] = useState(false);
-    useEffect(() => {
-      if (!focused) setDraft(initial);
-    }, [initial, focused]);
-    return h("input", {
-      type: "text",
-      className: "ts-input ts-inputWide",
-      value: draft,
-      placeholder,
-      spellCheck: false,
-      maxLength: 400,
-      "aria-label": themeId,
-      onChange: (event) => {
-        setDraft(event.target.value);
-        onChange(event.target.value);
-      },
-      onFocus: () => setFocused(true),
-      onBlur: () => setFocused(false),
     });
   }
 
@@ -1796,6 +1801,24 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     const theme = activeTheme(view.doc);
     const resolved = view.resolved;
     const t = (key) => translate(key);
+    const [roster, setRoster] = useState({ state: "loading", presets: [] });
+    const [rosterToken, setRosterToken] = useState(0);
+    const [presetPanel, setPresetPanel] = useState("");
+
+    useEffect(() => {
+      let cancelled = false;
+      setRoster((current) => ({ ...current, state: "loading" }));
+      loadAgentPresets()
+        .then((presets) => {
+          if (!cancelled) setRoster({ state: "ready", presets });
+        })
+        .catch(() => {
+          if (!cancelled) setRoster((current) => ({ ...current, state: "error" }));
+        });
+      return () => {
+        cancelled = true;
+      };
+    }, [rosterToken]);
 
     const setLight = (patch) => editTheme((item) => ({ ...item, light: { ...item.light, ...patch } }));
     const setDark = (patch) => editTheme((item) => ({ ...item, dark: { ...item.dark, ...patch } }));
@@ -1803,11 +1826,12 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     const setHero = (patch) => editTheme((item) => ({ ...item, hero: { ...item.hero, ...patch } }));
     const setCopy = (field, next) => editTheme((item) => ({ ...item, copy: { ...item.copy, [field]: next } }));
     const setMusic = (patch) => editTheme((item) => ({ ...item, music: { ...item.music, ...patch } }));
-    const setThemePresetLinks = (themeId, text) => {
-      const links = normalizePresetLinks(text);
+    const togglePreset = (themeId, presetId) => {
       edit((doc) => ({
         ...doc,
-        themes: doc.themes.map((item) => item.id === themeId ? { ...item, presets: links } : item),
+        themes: doc.themes.map((item) => item.id === themeId
+          ? { ...item, presets: togglePresetLink(item.presets, presetId) }
+          : item),
       }));
     };
 
@@ -1852,13 +1876,53 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
 
       h(Group, { label: t("group.presetLinks") },
         h("div", { className: "ts-copyNote" }, t("presetLink.hint")),
-        ...view.doc.themes.map((item) => h(Row, { key: item.id, title: item.name || t("themes.name") },
-          h(PresetLinkField, {
-            themeId: item.id,
-            initial: item.presets.join(", "),
-            placeholder: t("presetLink.placeholder"),
-            onChange: (text) => setThemePresetLinks(item.id, text),
-          }))),
+        ...view.doc.themes.map((item) => {
+          const open = presetPanel === item.id;
+          const selected = item.presets;
+          return h("div", { key: item.id, className: "ts-presetLink" },
+            h("div", { className: "ts-presetLinkHead" },
+              h("span", { className: "ts-presetLinkName" }, item.name || t("themes.name")),
+              h("div", { className: "ts-presetChips" },
+                selected.length === 0
+                  ? h("span", { className: "ts-presetChipsEmpty" }, t("presetLink.empty"))
+                  : selected.map((presetId) => h("span", {
+                    key: presetId,
+                    className: "ts-presetChip",
+                    title: presetId,
+                  }, presetLinkLabel(roster.presets, presetId)))),
+              h("button", {
+                type: "button",
+                className: "ts-btn ts-btnSmall",
+                onClick: () => setPresetPanel(open ? "" : item.id),
+              }, open ? t("presetLink.close") : t("presetLink.choose"))),
+            open
+              ? h("div", { className: "ts-presetPanel" },
+                roster.state === "loading"
+                  ? h("div", { className: "ts-presetChipsEmpty" }, t("presetLink.loading"))
+                  : roster.state === "error"
+                    ? h("div", { className: "ts-presetChipsEmpty" },
+                      t("presetLink.error"),
+                      h("button", {
+                        type: "button",
+                        className: "ts-link",
+                        onClick: () => setRosterToken((value) => value + 1),
+                      }, t("presetLink.retry")))
+                    : roster.presets.length === 0
+                      ? h("div", { className: "ts-presetChipsEmpty" }, t("presetLink.noPresets"))
+                      : roster.presets.map((preset) => {
+                        const checked = selected.some((entry) => entry.toLowerCase() === preset.id.toLowerCase());
+                        return h("label", { key: preset.id, className: "ts-presetOption" },
+                          h("input", {
+                            type: "checkbox",
+                            checked,
+                            onChange: () => togglePreset(item.id, preset.id),
+                          }),
+                          h("span", { className: "ts-presetOptionName" }, preset.name),
+                          preset.broken ? h("span", { className: "ts-presetOptionBroken" }, t("presetLink.broken")) : null,
+                          h("span", { className: "ts-presetOptionId" }, preset.id));
+                      }))
+              : null);
+        }),
         h("div", { className: "ts-presetDetected" },
           t("presetLink.detected"),
           h("span", { className: "ts-copyPreviewValue" }, lastAgentPreset === "" ? "—" : lastAgentPreset))),
@@ -2017,8 +2081,15 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "page.desc": "多套主题、配色、背景图、首屏立绘与文案。修改即时生效，保存在 DSH 的配置目录。",
     "group.themes": "主题",
     "group.presetLinks": "Agent 预设联动",
-    "presetLink.hint": "填 Agent 预设 id（逗号分隔），会话使用这些预设时自动切换到该主题。内置 id：standard / ptc / minimal / cordis；自定义预设是 ~/.dsh/.agent-presets 下的目录名。",
-    "presetLink.placeholder": "preset-id, another-id",
+    "presetLink.hint": "点「选择预设」多选：会话使用这些 Agent 预设时自动切换到该主题；勾选即保存。",
+    "presetLink.choose": "选择预设",
+    "presetLink.close": "收起",
+    "presetLink.loading": "读取预设列表…",
+    "presetLink.error": "读取预设列表失败",
+    "presetLink.retry": "重试",
+    "presetLink.empty": "未绑定预设",
+    "presetLink.noPresets": "没有可选的 Agent 预设",
+    "presetLink.broken": "加载失败",
     "presetLink.detected": "当前会话的 Agent 预设：",
     "group.style": "视觉风格",
     "group.light": "配色",
@@ -2144,8 +2215,15 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "page.desc": "Multiple themes, palettes, wallpaper, hero artwork and copy. Changes apply immediately and are saved in the DSH config directory.",
     "group.themes": "Themes",
     "group.presetLinks": "Agent preset linking",
-    "presetLink.hint": "Agent preset ids (comma separated) that should activate this theme. Built-in ids: standard / ptc / minimal / cordis; custom presets use the directory name under ~/.dsh/.agent-presets.",
-    "presetLink.placeholder": "preset-id, another-id",
+    "presetLink.hint": "Pick the Agent presets this theme belongs to: the matching theme is activated when a session runs one of them. Checking saves immediately.",
+    "presetLink.choose": "Choose presets",
+    "presetLink.close": "Close",
+    "presetLink.loading": "Loading presets…",
+    "presetLink.error": "Could not load presets",
+    "presetLink.retry": "Retry",
+    "presetLink.empty": "No preset bound",
+    "presetLink.noPresets": "No Agent presets available",
+    "presetLink.broken": "broken",
     "presetLink.detected": "Current session's Agent preset:",
     "group.style": "Visual style",
     "group.light": "Colors",
@@ -2318,6 +2396,19 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
 .ts-presetRow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;border-top:.5px solid var(--dsw-alias-border-l1)}
 .ts-presetLabel{color:var(--dsw-alias-label-secondary);font-size:12px}
 .ts-presetDetected{display:flex;gap:6px;padding:10px 16px;border-top:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
+.ts-presetLink{padding:10px 16px;border-top:.5px solid var(--dsw-alias-border-l1)}
+.ts-presetLinkHead{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.ts-presetLinkName{font-size:13px;line-height:20px;font-weight:500;min-width:88px}
+.ts-presetChips{display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex:1;min-width:0}
+.ts-presetChip{border-radius:10px;background:var(--dsw-alias-state-business-tertiary);color:var(--dsw-alias-brand-primary);padding:1px 8px;font-size:12px;line-height:18px;max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ts-presetChipsEmpty{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
+.ts-presetPanel{display:flex;flex-direction:column;gap:1px;padding:8px 0 2px}
+.ts-presetOption{display:flex;align-items:center;gap:8px;padding:4px 8px;border-radius:8px;cursor:pointer}
+.ts-presetOption:hover{background:var(--dsw-alias-interactive-bg-hover)}
+.ts-presetOption input{accent-color:var(--dsw-alias-brand-primary);flex:none}
+.ts-presetOptionName{font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary)}
+.ts-presetOptionBroken{color:var(--dsw-alias-state-error-primary);font-size:11px}
+.ts-presetOptionId{margin-left:auto;color:var(--dsw-alias-label-tertiary);font-size:11px;font-variant-numeric:tabular-nums}
 .ts-imagePreviewGlyph{color:var(--dsw-alias-label-secondary);font-size:22px;line-height:1}
 .ts-btn{border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px;padding:4px 14px;cursor:pointer}
 .ts-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}
@@ -2503,6 +2594,8 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     presetDesignSnapshot,
     normalizePresetLinks,
     themeForAgentPreset,
+    togglePresetLink,
+    presetLinkLabel,
     normalizeDocument,
     activeTheme,
     resolvePalettes,

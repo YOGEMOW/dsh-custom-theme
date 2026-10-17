@@ -28,6 +28,9 @@ in order or at random.
 
 修改即时生效（本地推导 token，不等保存回包），约 160ms 防抖后写入配置目录，页脚显示保存状态。
 
+> 0.8.0：Agent 预设联动改成**从宿主预设列表里多选**（显示预设名称 + id，勾选即保存），不再手填 id；
+> 新增宿主路由 `GET /dsh-theme-studio/agent-presets`。
+>
 > 0.7.0：新增**与 Agent 预设联动**——每套主题可绑定 Agent 预设 id，会话的 `agentPreset` 投影变化时
 > 自动切换到对应主题；设置页显示最近检测到的预设 id。
 >
@@ -86,12 +89,12 @@ in order or at random.
 Agent 预设（Session 的 `agentPreset` 投影）决定一个会话用哪套工具/提示词。主题可以绑定预设，在
 **会话使用该预设时自动切换过去**：
 
-- 设置页「Agent 预设联动」给每套主题填预设 id（逗号分隔，忽略大小写）；
-- 内置 id：`standard`、`ptc`、`minimal`、`cordis`；自定义预设就是 `~/.dsh/.agent-presets/<目录名>`；
+- 设置页「Agent 预设联动」每套主题一行：点「选择预设」展开勾选列表（**多选**，勾选即保存），
+  列表来自宿主 `agentPresets.list()`（名牌 + id，加载失败的预设会标注）；
 - 客户端占用两个无害的会话槽位（`conversation.input.dock` 与 `conversation.hero.options`）各挂一个
   不渲染的观察组件，通过标准 Hook `useProjection("agentPreset")` 读取当前会话预设，一旦变化就切主题；
 - 没有任何主题绑定该预设时，保持用户当前主题不动；
-- 设置页底部显示「当前会话的 Agent 预设」，方便核对 id 是否写对。
+- 设置页底部显示「当前会话的 Agent 预设」，方便核对是否命中。
 
 ## 背景音乐
 
@@ -231,6 +234,7 @@ git clone https://github.com/YOGEMOW/dsh-custom-theme.git
 plugin_manager install_bundle    # target: <克隆目录>
 ```
 
+- 0.8.0 新增宿主 `agent-presets` 只读路由：**升级需要重启一次 DSH**（之后联动配置只需刷新页面）；
 - 0.5.0 新增宿主 `assets` 上传/提供路由：**首次升级需要重启一次 DSH**（之后主题/音乐迭代只需刷新页面）；
 - 0.4.0 改了包名（`dsh-theme-everforest` → `dsh-custom-theme`），当时需要 remove + install；
 - 宿主传输是 `/dsh-theme-studio/document`（文件 `theme.json`）与 `/dsh-theme-studio/asset/*`；
@@ -257,10 +261,12 @@ node tests/state.test.mjs
 node tests/client.test.mjs
 ```
 
-27 项断言覆盖：文档往返与缺失回退、boot 提示校验与注入（含遮罩）、assets 魔数识别/存储/路径校验、
-路由注册、默认主题、v2→v3 迁移、**德谬歌预设内容与版本同步（保留用户字段与壁纸）**、
+28 项断言覆盖：文档往返与缺失回退、boot 提示校验与注入（含遮罩）、assets 魔数识别/存储/路径校验、
+Agent 预设列表路由（id/名称/失败标记）、路由注册、默认主题、v2→v3 迁移、
+**德谬歌预设内容与版本同步（保留用户字段与壁纸）**、
 **音乐配置归一化（含最小化暂停）**、**文字遮罩 0/150% 的开关与强度**、
-**空白文案行的丢弃与占位行**、**壁纸 CSS 缓存的复用与失效**、**Agent 预设绑定与自动切主题**、
+**空白文案行的丢弃与占位行**、**壁纸 CSS 缓存的复用与失效**、
+**Agent 预设绑定（多选增删/大小写/显示名）与自动切主题**、
 主题 id 去重、token 双方案取值、壁纸可见度对底色 alpha 与文字对比度的影响、
 文案顺序/随机轮换、文案与壁纸 CSS（含遮罩）、boot hint、以及挂载后修改强调色**立即**反映到 token。
 
