@@ -401,6 +401,28 @@ test('wallpaper CSS is reused while unchanged and refreshed when a knob changes'
   assert.ok(!off.includes('linear-gradient'))
 })
 
+test('themes remember which agent presets activate them', () => {
+  const doc = model.normalizeDocument({
+    version: 3,
+    themes: [
+      { id: 'a', name: 'A', presets: [' Standard ', 'standard', 'wonderland-lua-builder', ''] },
+      { id: 'b', name: 'B' },
+    ],
+  })
+  assert.deepEqual(doc.themes[0].presets, ['Standard', 'wonderland-lua-builder'])
+  assert.deepEqual(doc.themes[1].presets, [])
+
+  // Matching is case-insensitive and ignores themes that claim no preset.
+  assert.equal(model.themeForAgentPreset(doc, 'WONDERLAND-LUA-BUILDER').id, 'a')
+  assert.equal(model.themeForAgentPreset(doc, 'cordis'), null)
+  assert.equal(model.themeForAgentPreset(doc, ''), null)
+
+  // Links survive a round-trip through the editor state.
+  const links = model.normalizePresetLinks('one, two；three  one')
+  assert.deepEqual(links, ['one', 'two', 'three'])
+  assert.deepEqual(model.normalizePresetLinks(undefined), [])
+})
+
 test('mounts, registers the page and applies palette edits immediately', async () => {
   const elements = []
   globalThis.document = {
@@ -464,4 +486,20 @@ test('mounts, registers the page and applies palette edits immediately', async (
   assert.equal(plugin.__stores.viewStore.get().doc.activeThemeId, withNew.themes[0].id)
   plugin.__themeOps.removeTheme(withNew.themes[1].id)
   assert.equal(plugin.__stores.viewStore.get().doc.themes.length, 1)
+
+  // Session-scoped watchers run the Agent-preset projection.
+  assert.ok(injections.includes('conversation.input.dock'), 'the composer dock must host the preset watcher')
+  assert.ok(injections.includes('conversation.hero.options'), 'the hero options row must host the preset watcher')
+
+  // A Session switching to a linked Agent preset activates its theme.
+  plugin.__edit((doc) => ({
+    ...doc,
+    themes: doc.themes.concat([{ ...doc.themes[0], id: 'agent-theme', name: 'Agent theme', presets: ['standard'] }]),
+  }))
+  plugin.__agentPresets.applyAgentPreset('STANDARD')
+  assert.equal(plugin.__stores.viewStore.get().doc.activeThemeId, 'agent-theme')
+  assert.equal(plugin.__stores.agentPresetStore.get(), 'STANDARD')
+  // An unclaimed preset keeps whatever theme the user chose.
+  plugin.__agentPresets.applyAgentPreset('ptc')
+  assert.equal(plugin.__stores.viewStore.get().doc.activeThemeId, 'agent-theme')
 })

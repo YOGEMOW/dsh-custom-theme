@@ -231,6 +231,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       music: defaultMusic(),
       copy: { headline: emptyList(), preview: emptyList(), placeholderHero: emptyList(), placeholderDefault: emptyList() },
       cursor: { headline: 0, preview: 0, placeholderHero: 0, placeholderDefault: 0 },
+      presets: [],
     };
   }
 
@@ -327,6 +328,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       music: normalizeMusic(source.music),
       copy,
       cursor,
+      presets: normalizePresetLinks(source.presets),
       preset: typeof source.preset === "string" && source.preset !== "" ? source.preset.slice(0, 40) : null,
       presetVersion: Number.isFinite(Number(source.presetVersion)) ? Math.max(0, Math.round(Number(source.presetVersion))) : 0,
       presetBase: source.presetBase !== null && typeof source.presetBase === "object"
@@ -551,6 +553,46 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     { id: "everforest", label: "presets.everforest" },
     { id: "demiurge", label: "presets.demiurge" },
   ]);
+
+  /* ------------------------------------------------------------------ *
+   * Agent-preset linking
+   *
+   * A Session's Agent preset is a Host projection (`agentPreset`), readable in
+   * any session-scoped slot through `useProjection("agentPreset")`. A theme may
+   * name the presets it belongs to; when the open Session runs one of them the
+   * matching theme is activated.
+   * ------------------------------------------------------------------ */
+
+  const PRESET_LINK_MAX = 12;
+
+  function normalizePresetLinks(input) {
+    const raw = Array.isArray(input)
+      ? input
+      : typeof input === "string"
+        ? input.split(/[,，;；\s]+/u)
+        : [];
+    const links = [];
+    const seen = new Set();
+    for (const item of raw) {
+      if (typeof item !== "string") continue;
+      const value = item.trim().slice(0, 120);
+      if (value === "") continue;
+      const key = value.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      links.push(value);
+      if (links.length >= PRESET_LINK_MAX) break;
+    }
+    return links;
+  }
+
+  /** The theme bound to one Agent preset id, or null when no theme claims it. */
+  function themeForAgentPreset(doc, presetId) {
+    if (typeof presetId !== "string" || presetId === "") return null;
+    const wanted = presetId.toLowerCase();
+    const match = doc.themes.find((theme) => theme.presets.some((entry) => entry.toLowerCase() === wanted));
+    return match ?? null;
+  }
 
   /* ------------------------------------------------------------------ *
    * Palette and tokens
@@ -862,6 +904,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
 
   const viewStore = createStore(initialView());
   const modeStore = createStore("system");
+  const agentPresetStore = createStore("");
 
   let ctxRef = null;
   let tokenDisposer = null;
@@ -870,6 +913,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   let studioTag = null;
   let copyTag = null;
   let heroDisposer = null;
+  const presetWatchers = [];
   let saveTimer = null;
   let saveGeneration = 0;
 
@@ -927,6 +971,30 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     });
   }
 
+  /** Text field for one theme's Agent-preset links, tolerant of in-progress typing. */
+  function PresetLinkField({ themeId, initial, placeholder, onChange }) {
+    const [draft, setDraft] = useState(initial);
+    const [focused, setFocused] = useState(false);
+    useEffect(() => {
+      if (!focused) setDraft(initial);
+    }, [initial, focused]);
+    return h("input", {
+      type: "text",
+      className: "ts-input ts-inputWide",
+      value: draft,
+      placeholder,
+      spellCheck: false,
+      maxLength: 400,
+      "aria-label": themeId,
+      onChange: (event) => {
+        setDraft(event.target.value);
+        onChange(event.target.value);
+      },
+      onFocus: () => setFocused(true),
+      onBlur: () => setFocused(false),
+    });
+  }
+
   /** Hero image occupant for the blank-session brand mark. */
   function HeroArt() {
     const view = useSyncExternalStore(viewStore.subscribe, viewStore.get);
@@ -950,6 +1018,43 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
         display: "block",
       },
     });
+  }
+
+  /**
+   * Session-scoped watcher: follows the Session's `agentPreset` projection and
+   * activates the theme that names it. Renders nothing.
+   */
+  function PresetWatcher({ useProjection }) {
+    const preset = typeof useProjection === "function" ? useProjection("agentPreset") : undefined;
+    useEffect(() => {
+      if (typeof preset === "string" && preset !== "") applyAgentPreset(preset);
+    }, [preset]);
+    return null;
+  }
+
+  /** Switch to the theme bound to `presetId`, when one exists and is not active. */
+  function applyAgentPreset(presetId) {
+    const view = currentView();
+    agentPresetStore.set(presetId);
+    const theme = themeForAgentPreset(view.doc, presetId);
+    if (theme === null || theme.id === view.doc.activeThemeId) return;
+    setActiveTheme(theme.id);
+  }
+
+  /** Occupy two harmless session slots so the preset projection stays observed. */
+  function syncPresetWatcher() {
+    const ctx = ctxRef;
+    if (ctx === null || presetWatchers.length > 0) return;
+    for (const slot of ["conversation.input.dock", "conversation.hero.options"]) {
+      try {
+        presetWatchers.push(ctx.slots.inject(slot, () => ctx.slots.register(
+          { name: slot, id: "theme-agent-preset", order: 900 },
+          PresetWatcher,
+        )));
+      } catch {
+        /* slot missing in this build: the other one may still exist */
+      }
+    }
   }
 
   function syncHeroSlot() {
@@ -1104,6 +1209,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     }
 
     syncHeroSlot();
+    syncPresetWatcher();
     syncMusic(theme);
     document.documentElement.setAttribute(READY_ATTR, "");
   }
@@ -1686,6 +1792,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   function AppearancePage() {
     const view = useView();
     const mode = useSyncExternalStore(modeStore.subscribe, modeStore.get);
+    const lastAgentPreset = useSyncExternalStore(agentPresetStore.subscribe, agentPresetStore.get);
     const theme = activeTheme(view.doc);
     const resolved = view.resolved;
     const t = (key) => translate(key);
@@ -1696,6 +1803,13 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     const setHero = (patch) => editTheme((item) => ({ ...item, hero: { ...item.hero, ...patch } }));
     const setCopy = (field, next) => editTheme((item) => ({ ...item, copy: { ...item.copy, [field]: next } }));
     const setMusic = (patch) => editTheme((item) => ({ ...item, music: { ...item.music, ...patch } }));
+    const setThemePresetLinks = (themeId, text) => {
+      const links = normalizePresetLinks(text);
+      edit((doc) => ({
+        ...doc,
+        themes: doc.themes.map((item) => item.id === themeId ? { ...item, presets: links } : item),
+      }));
+    };
 
     const modeOptions = [
       { value: "light", label: t("mode.light") },
@@ -1735,6 +1849,19 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
 
       h(Group, { label: t("group.themes") },
         h(ThemeList, { t })),
+
+      h(Group, { label: t("group.presetLinks") },
+        h("div", { className: "ts-copyNote" }, t("presetLink.hint")),
+        ...view.doc.themes.map((item) => h(Row, { key: item.id, title: item.name || t("themes.name") },
+          h(PresetLinkField, {
+            themeId: item.id,
+            initial: item.presets.join(", "),
+            placeholder: t("presetLink.placeholder"),
+            onChange: (text) => setThemePresetLinks(item.id, text),
+          }))),
+        h("div", { className: "ts-presetDetected" },
+          t("presetLink.detected"),
+          h("span", { className: "ts-copyPreviewValue" }, lastAgentPreset === "" ? "—" : lastAgentPreset))),
 
       h(Group, { label: t("group.style") },
         h(Row, { title: t("mode.title"), description: t("mode.desc") },
@@ -1889,6 +2016,10 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "page.title": "DSH 自定义主题",
     "page.desc": "多套主题、配色、背景图、首屏立绘与文案。修改即时生效，保存在 DSH 的配置目录。",
     "group.themes": "主题",
+    "group.presetLinks": "Agent 预设联动",
+    "presetLink.hint": "填 Agent 预设 id（逗号分隔），会话使用这些预设时自动切换到该主题。内置 id：standard / ptc / minimal / cordis；自定义预设是 ~/.dsh/.agent-presets 下的目录名。",
+    "presetLink.placeholder": "preset-id, another-id",
+    "presetLink.detected": "当前会话的 Agent 预设：",
     "group.style": "视觉风格",
     "group.light": "配色",
     "group.dark": "深色配色",
@@ -2012,6 +2143,10 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "page.title": "DSH Custom Theme",
     "page.desc": "Multiple themes, palettes, wallpaper, hero artwork and copy. Changes apply immediately and are saved in the DSH config directory.",
     "group.themes": "Themes",
+    "group.presetLinks": "Agent preset linking",
+    "presetLink.hint": "Agent preset ids (comma separated) that should activate this theme. Built-in ids: standard / ptc / minimal / cordis; custom presets use the directory name under ~/.dsh/.agent-presets.",
+    "presetLink.placeholder": "preset-id, another-id",
+    "presetLink.detected": "Current session's Agent preset:",
     "group.style": "Visual style",
     "group.light": "Colors",
     "group.dark": "Dark colors",
@@ -2182,6 +2317,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
 .ts-themeFoot{display:flex;gap:10px;padding:10px 16px}
 .ts-presetRow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 16px;border-top:.5px solid var(--dsw-alias-border-l1)}
 .ts-presetLabel{color:var(--dsw-alias-label-secondary);font-size:12px}
+.ts-presetDetected{display:flex;gap:6px;padding:10px 16px;border-top:.5px solid var(--dsw-alias-border-l1);color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px}
 .ts-imagePreviewGlyph{color:var(--dsw-alias-label-secondary);font-size:22px;line-height:1}
 .ts-btn{border:.5px solid var(--dsw-alias-border-l2);border-radius:8px;background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);font:inherit;font-size:13px;line-height:20px;padding:4px 14px;cursor:pointer}
 .ts-btn:hover{background:var(--dsw-alias-interactive-bg-hover)}
@@ -2288,6 +2424,14 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
         heroDisposer();
         heroDisposer = null;
       }
+      while (presetWatchers.length > 0) {
+        const dispose = presetWatchers.pop();
+        try {
+          dispose();
+        } catch {
+          /* already disposed with the plugin context */
+        }
+      }
       if (saveTimer !== null) {
         clearTimeout(saveTimer);
         saveTimer = null;
@@ -2357,6 +2501,8 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     PRESET_VERSION,
     presetDesign,
     presetDesignSnapshot,
+    normalizePresetLinks,
+    themeForAgentPreset,
     normalizeDocument,
     activeTheme,
     resolvePalettes,
@@ -2369,11 +2515,12 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     buildBootHint,
     pickCopy,
   };
-  exports.__stores = { viewStore, modeStore };
+  exports.__stores = { viewStore, modeStore, agentPresetStore };
   exports.__locale = { zh: ZH, en: EN };
   exports.__edit = edit;
   exports.__rerollCopy = rerollCopy;
   exports.__applyView = applyView;
   exports.__themeOps = { addTheme, duplicateTheme, removeTheme, setActiveTheme };
+  exports.__agentPresets = { applyAgentPreset }; 
   return module.exports;
 } });
