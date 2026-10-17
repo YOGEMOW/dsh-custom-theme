@@ -426,13 +426,14 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       return;
     }
     if (!PRESET_IDS.includes(theme.preset)) return;
-    const design = presetDesign(theme.preset);
     if (theme.presetBase === null) {
-      theme.presetBase = design;
+      theme.presetBase = presetDesign(theme.preset);
       theme.presetVersion = PRESET_VERSION;
       return;
     }
+    // Past this point a design rebuild is only worth it when a new preset shipped.
     if (theme.presetVersion >= PRESET_VERSION) return;
+    const design = presetDesign(theme.preset);
     const base = theme.presetBase;
     syncGroup(theme.light, base.light, design.light, PALETTE_FIELDS);
     syncGroup(theme.dark, base.dark, design.dark, PALETTE_FIELDS);
@@ -756,9 +757,26 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     return Math.min(0.85, (0.12 + visible * 0.40) * (strength / 100));
   }
 
+  let wallpaperCache = { image: null, fields: "", css: "" };
+
   /** Fixed wallpaper layer behind the translucent application surfaces. */
   function buildWallpaperCss(background, palettes) {
     if (background === undefined || background === null || background.image === "") return "";
+    const fields = [
+      background.strength, background.panelOpacity, background.scrim,
+      background.blur, background.brightness, background.position,
+      palettes === undefined || palettes === null ? "" : palettes.light.surface,
+      palettes === undefined || palettes === null ? "" : palettes.dark.surface,
+    ].join("|");
+    if (wallpaperCache.image === background.image && wallpaperCache.fields === fields) {
+      return wallpaperCache.css;
+    }
+    const css = renderWallpaperCss(background, palettes);
+    wallpaperCache = { image: background.image, fields, css };
+    return css;
+  }
+
+  function renderWallpaperCss(background, palettes) {
     const scale = background.blur > 0 ? "transform:scale(1.04);" : "";
     const base = [
       'content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;',
@@ -847,6 +865,8 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
 
   let ctxRef = null;
   let tokenDisposer = null;
+  let tokenKey = "";
+  let sheetKey = { copy: null, wall: null };
   let studioTag = null;
   let copyTag = null;
   let heroDisposer = null;
@@ -1059,13 +1079,28 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     if (ctx === null) return;
     const theme = activeTheme(view.doc);
 
-    tokenDisposer = ctx.theme.overrideTokens(SOURCE, buildTokens(theme, view.resolved));
-    if (typeof tokenDisposer !== "function") tokenDisposer = null;
+    // Editing copy must not re-derive the 34 tokens or re-parse the (possibly
+    // huge) wallpaper stylesheet on every keystroke; both are cached by value.
+    const nextTokenKey = [
+      JSON.stringify(view.resolved.light),
+      JSON.stringify(view.resolved.dark),
+      theme.background.image !== "",
+      theme.background.strength,
+      theme.background.panelOpacity,
+    ].join("|");
+    if (tokenDisposer === null || tokenKey !== nextTokenKey) {
+      tokenDisposer = ctx.theme.overrideTokens(SOURCE, buildTokens(theme, view.resolved));
+      if (typeof tokenDisposer !== "function") tokenDisposer = null;
+      tokenKey = nextTokenKey;
+    }
 
     if (copyTag !== null) {
-      copyTag.textContent = [buildCopyCss(view.copy.values), buildWallpaperCss(theme.background, view.resolved)]
-        .filter((part) => part !== "")
-        .join("\n");
+      const copyCss = buildCopyCss(view.copy.values);
+      const wallCss = buildWallpaperCss(theme.background, view.resolved);
+      if (sheetKey.copy !== copyCss || sheetKey.wall !== wallCss) {
+        copyTag.textContent = [copyCss, wallCss].filter((part) => part !== "").join("\n");
+        sheetKey = { copy: copyCss, wall: wallCss };
+      }
     }
 
     syncHeroSlot();
@@ -1522,7 +1557,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
             type: "button",
             className: "ts-link",
             disabled: items.length >= 20,
-            onClick: () => setItems([...items, ""]),
+            onClick: () => setItems([...items, t("copy.newItem")]),
           }, t("copy.add")))),
       description ? h("div", { className: "ts-copyDesc" }, description) : null,
       items.length === 0
@@ -1921,6 +1956,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "copy.mode.sequence": "顺序",
     "copy.mode.random": "随机",
     "copy.add": "添加一条",
+    "copy.newItem": "新文案",
     "copy.remove": "删除",
     "copy.up": "上移",
     "copy.down": "下移",
@@ -2043,6 +2079,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "copy.mode.sequence": "Seq",
     "copy.mode.random": "Random",
     "copy.add": "Add line",
+    "copy.newItem": "New line",
     "copy.remove": "Remove",
     "copy.up": "Move up",
     "copy.down": "Move down",

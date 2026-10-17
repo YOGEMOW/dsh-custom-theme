@@ -375,6 +375,32 @@ test('the wallpaper scrim is configurable per theme', () => {
   assert.match(model.buildBootHint(strong).wallpaper.scrim.light, /^rgba\(253, 246, 227, 0\.54\)$/)
 })
 
+test('copy lists drop blank lines but keep the new-line placeholder', () => {
+  const doc = model.normalizeDocument({
+    version: 3,
+    themes: [{
+      id: 't',
+      name: 'T',
+      copy: { headline: { mode: 'sequence', items: ['甲', '新文案', '   ', '乙'] } },
+    }],
+  })
+  // Adding a line used to insert "", which normalization silently dropped — the
+  // editor now adds a real placeholder value so the row persists.
+  assert.deepEqual(doc.themes[0].copy.headline.items, ['甲', '新文案', '乙'])
+})
+
+test('wallpaper CSS is reused while unchanged and refreshed when a knob changes', () => {
+  const palettes = model.resolvePalettes(model.defaultTheme('t', 'T'))
+  const background = { image: 'https://example.com/w.png', strength: 80, panelOpacity: 100, scrim: 100, blur: 0, brightness: 100, position: 'cover' }
+  const first = model.buildWallpaperCss(background, palettes)
+  const again = model.buildWallpaperCss({ ...background }, palettes)
+  assert.equal(first, again)
+
+  const off = model.buildWallpaperCss({ ...background, scrim: 0 }, palettes)
+  assert.notEqual(off, first)
+  assert.ok(!off.includes('linear-gradient'))
+})
+
 test('mounts, registers the page and applies palette edits immediately', async () => {
   const elements = []
   globalThis.document = {
