@@ -325,6 +325,11 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       music: normalizeMusic(source.music),
       copy,
       cursor,
+      preset: typeof source.preset === "string" && source.preset !== "" ? source.preset.slice(0, 40) : null,
+      presetVersion: Number.isFinite(Number(source.presetVersion)) ? Math.max(0, Math.round(Number(source.presetVersion))) : 0,
+      presetBase: source.presetBase !== null && typeof source.presetBase === "object"
+        ? JSON.parse(JSON.stringify(source.presetBase))
+        : null,
     };
   }
 
@@ -354,11 +359,87 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     }
     const requested = typeof source.activeThemeId === "string" ? source.activeThemeId : "";
     const activeThemeId = themes.some((theme) => theme.id === requested) ? requested : themes[0].id;
+    for (const theme of themes) syncPreset(theme);
     return { version: THEME_VERSION, activeThemeId, themes };
   }
 
   function activeTheme(doc) {
     return doc.themes.find((theme) => theme.id === doc.activeThemeId) ?? doc.themes[0];
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Preset linking — a theme created from a preset remembers which preset
+   * and which design snapshot it came from. When the preset design evolves
+   * (PRESET_VERSION bump), every linked theme adopts the new design for the
+   * fields the user has not touched, while customised fields and the
+   * wallpaper stay as they are.
+   * ------------------------------------------------------------------ */
+
+  const PRESET_VERSION = 1;
+
+  /** The design fields a preset owns (the wallpaper is never owned by a preset). */
+  function presetDesignSnapshot(theme) {
+    return {
+      light: JSON.parse(JSON.stringify(theme.light)),
+      dark: JSON.parse(JSON.stringify(theme.dark)),
+      separateDark: theme.separateDark,
+      hero: JSON.parse(JSON.stringify(theme.hero)),
+      copy: JSON.parse(JSON.stringify(theme.copy)),
+      music: JSON.parse(JSON.stringify(theme.music)),
+    };
+  }
+
+  function presetDesign(presetId) {
+    if (presetId === "demiurge") return presetDesignSnapshot(demiurgeTheme());
+    return presetDesignSnapshot(defaultTheme("everforest", "Everforest"));
+  }
+
+  const PRESET_IDS = Object.freeze(["everforest", "demiurge"]);
+  const PALETTE_FIELDS = Object.freeze(["accent", "surface", "ink", "contrast", "success", "danger", "warn", "idle", "sidebar"]);
+
+  function cloneJson(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function sameJson(a, b) {
+    return JSON.stringify(a) === JSON.stringify(b);
+  }
+
+  /** Replace only the fields the user has not touched since the last preset. */
+  function syncGroup(target, base, design, fields) {
+    for (const field of fields) {
+      if (sameJson(target[field], base[field])) target[field] = cloneJson(design[field]);
+    }
+  }
+
+  /** Link a theme to a preset, or adopt one by its preset name. */
+  function syncPreset(theme) {
+    if (theme.preset === null) {
+      // Themes created before preset linking: adopt the matching built-in design.
+      if (theme.name === "德谬歌") {
+        theme.preset = "demiurge";
+        theme.presetVersion = PRESET_VERSION;
+        theme.presetBase = presetDesign("demiurge");
+      }
+      return;
+    }
+    if (!PRESET_IDS.includes(theme.preset)) return;
+    const design = presetDesign(theme.preset);
+    if (theme.presetBase === null) {
+      theme.presetBase = design;
+      theme.presetVersion = PRESET_VERSION;
+      return;
+    }
+    if (theme.presetVersion >= PRESET_VERSION) return;
+    const base = theme.presetBase;
+    syncGroup(theme.light, base.light, design.light, PALETTE_FIELDS);
+    syncGroup(theme.dark, base.dark, design.dark, PALETTE_FIELDS);
+    syncGroup(theme.hero, base.hero, design.hero, ["image", "size"]);
+    syncGroup(theme.copy, base.copy, design.copy, COPY_FIELDS);
+    syncGroup(theme.music, base.music, design.music, ["src", "enabled", "volume", "loop"]);
+    if (theme.separateDark === base.separateDark) theme.separateDark = design.separateDark;
+    theme.presetVersion = PRESET_VERSION;
+    theme.presetBase = design;
   }
 
   /* ------------------------------------------------------------------ *
@@ -528,12 +609,16 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     const hasWallpaper = background !== undefined && background !== null && background.image !== "";
     const visible = hasWallpaper ? clamp(Number(background.strength) || 0, 0, 100) / 100 : 0;
     const surfaceOpacity = (share) => 1 - visible * share;
+    // Text that is merely "mixed toward the surface" loses contrast as soon as
+    // the surface itself becomes translucent over a bright wallpaper, so the mix
+    // is pulled back toward the ink while a wallpaper is showing.
+    const readable = (share) => Math.max(0.10, share - visible * 0.20);
     const chrome = hasWallpaper
       ? clamp(Number(background.panelOpacity === undefined ? 100 : background.panelOpacity) || 0, 0, 100) / 100
       : 1;
 
     return {
-      "--dsw-alias-bg-base": withOpacity(surface, surfaceOpacity(1)),
+      "--dsw-alias-bg-base": withOpacity(surface, surfaceOpacity(0.82)),
       "--dsw-alias-bg-layer-1": withOpacity(layer1, chrome),
       "--dsw-alias-bg-layer-2": withOpacity(layer2, chrome),
       "--dsw-alias-bg-overlay": withOpacity(overlay, chrome),
@@ -544,11 +629,11 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       "--dsw-alias-border-l3": alpha(ink, 0.20 + 0.28 * c),
       "--dsw-alias-border-l4": alpha(ink, 0.24 + 0.34 * c),
       "--dsw-alias-label-primary": ink,
-      "--dsw-alias-label-primary-dimmed": mix(ink, surface, 0.22),
-      "--dsw-alias-label-secondary": mix(ink, surface, 0.35),
-      "--dsw-alias-label-tertiary": mix(ink, surface, 0.48),
-      "--dsw-alias-label-caption": mix(ink, surface, 0.52),
-      "--dsw-alias-label-dimmed": mix(ink, surface, 0.62),
+      "--dsw-alias-label-primary-dimmed": mix(ink, surface, readable(0.22)),
+      "--dsw-alias-label-secondary": mix(ink, surface, readable(0.35)),
+      "--dsw-alias-label-tertiary": mix(ink, surface, readable(0.48)),
+      "--dsw-alias-label-caption": mix(ink, surface, readable(0.52)),
+      "--dsw-alias-label-dimmed": mix(ink, surface, readable(0.62)),
       "--dsw-alias-label-primary-bluish": mix(accent, ink, 0.45),
       "--dsw-alias-brand-primary": accent,
       "--dsw-alias-state-success-primary": palette.success,
@@ -563,7 +648,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       "--dsw-alias-scrollbar-bg-l1": alpha(ink, 0.10),
       "--dsw-alias-scrollbar-bg-l2": alpha(ink, 0.16),
       "--dsw-alias-scrollbar-hover-l2": alpha(ink, 0.28),
-      "--dsw-specific-sidebar-fill": withOpacity(sidebar, surfaceOpacity(0.88)),
+      "--dsw-specific-sidebar-fill": withOpacity(sidebar, surfaceOpacity(0.72)),
       "--dsw-specific-input-major": withOpacity(scheme === "dark" ? layer1 : overlay, chrome),
       "--dsw-specific-menu": withOpacity(overlay, chrome),
       "--dsw-specific-selector": withOpacity(layer2, chrome),
@@ -660,21 +745,38 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     return parts.join("\n");
   }
 
+  /** Scrim opacity over the wallpaper: enough to keep text readable at any strength. */
+  function wallpaperScrimAlpha(background) {
+    const visible = clamp(Number(background.strength) || 0, 0, 100) / 100;
+    return 0.12 + visible * 0.40;
+  }
+
   /** Fixed wallpaper layer behind the translucent application surfaces. */
-  function buildWallpaperCss(background) {
+  function buildWallpaperCss(background, palettes) {
     if (background === undefined || background === null || background.image === "") return "";
     const scale = background.blur > 0 ? "transform:scale(1.04);" : "";
-    return [
-      'body::before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;',
-      `background-image:url(${cssString(background.image)});`,
+    const base = [
+      'content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;',
       `background-size:${background.position};background-position:center;background-repeat:no-repeat;`,
-      `filter:blur(${background.blur}px) brightness(${background.brightness}%);${scale}}`,
+      `filter:blur(${background.blur}px) brightness(${background.brightness}%);${scale}`,
     ].join("");
+    const url = cssString(background.image);
+    if (palettes === undefined || palettes === null) {
+      return `body::before{${base}background-image:url(${url});}`;
+    }
+    const scrim = wallpaperScrimAlpha(background);
+    const light = alpha(palettes.light.surface, scrim);
+    const dark = alpha(palettes.dark.surface, scrim);
+    return [
+      `body::before{${base}background-image:linear-gradient(${light},${light}),url(${url});}`,
+      `body[data-ds-dark-theme]::before{background-image:linear-gradient(${dark},${dark}),url(${url});}`,
+    ].join("\n");
   }
 
   /** Minimal boot hint the Host paints before this bundle runs. */
   function buildBootHint(theme, palettes) {
     const resolved = palettes ?? resolvePalettes(theme);
+    const scrim = wallpaperScrimAlpha(theme.background);
     return {
       light: resolved.light.surface,
       dark: resolved.dark.surface,
@@ -685,6 +787,10 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
           blur: theme.background.blur,
           brightness: theme.background.brightness,
           position: theme.background.position,
+          scrim: {
+            light: alpha(resolved.light.surface, scrim),
+            dark: alpha(resolved.dark.surface, scrim),
+          },
         },
     };
   }
@@ -919,7 +1025,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     if (typeof tokenDisposer !== "function") tokenDisposer = null;
 
     if (copyTag !== null) {
-      copyTag.textContent = [buildCopyCss(view.copy.values), buildWallpaperCss(theme.background)]
+      copyTag.textContent = [buildCopyCss(view.copy.values), buildWallpaperCss(theme.background, view.resolved)]
         .filter((part) => part !== "")
         .join("\n");
     }
@@ -1055,6 +1161,9 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       theme = defaultTheme("everforest", "Everforest");
     }
     theme.id = id;
+    theme.preset = presetId;
+    theme.presetVersion = PRESET_VERSION;
+    theme.presetBase = presetDesign(presetId);
     edit((doc) => ({ ...doc, themes: [...doc.themes, theme], activeThemeId: id }));
   }
 
@@ -2100,6 +2209,9 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     normalizeMusic,
     demiurgeTheme,
     PRESETS,
+    PRESET_VERSION,
+    presetDesign,
+    presetDesignSnapshot,
     normalizeDocument,
     activeTheme,
     resolvePalettes,

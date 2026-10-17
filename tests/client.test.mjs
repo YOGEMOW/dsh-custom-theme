@@ -150,14 +150,18 @@ test('tokens follow the palette and the wallpaper visibility', () => {
     ...theme,
     background: { image: 'https://example.com/a.png', strength: 60, panelOpacity: 100, blur: 0, brightness: 100, position: 'cover' },
   })
-  assert.match(wallpapered['--dsw-alias-bg-base'].light, /^rgba\(253, 246, 227, 0\.4\)$/)
-  assert.match(wallpapered['--dsw-alias-bg-base'].dark, /^rgba\(45, 53, 59, 0\.4\)$/)
+  assert.match(wallpapered['--dsw-alias-bg-base'].light, /^rgba\(253, 246, 227, 0\.508\)$/)
+  assert.match(wallpapered['--dsw-alias-bg-base'].dark, /^rgba\(45, 53, 59, 0\.508\)$/)
   // Elevated surfaces stay opaque by default, so a translucent page never makes
   // the settings panel / popovers translucent (no overlapping text).
   assert.equal(wallpapered['--dsw-alias-bg-layer-2'].light, '#f4eedc')
   assert.equal(wallpapered['--dsw-alias-bg-overlay'].light, '#fefbf2')
   // Text stays opaque over the wallpaper.
   assert.equal(wallpapered['--dsw-alias-label-primary'].light, '#5c6a72')
+  // Secondary/paragraph text is pulled toward the ink while a wallpaper shows,
+  // so pale grays stay readable.
+  assert.notEqual(wallpapered['--dsw-alias-label-secondary'].light, plain['--dsw-alias-label-secondary'].light)
+  assert.notEqual(wallpapered['--dsw-alias-label-tertiary'].light, plain['--dsw-alias-label-tertiary'].light)
 
   // The sub-interface opacity is a separate knob.
   const frosted = model.buildTokens({
@@ -165,7 +169,7 @@ test('tokens follow the palette and the wallpaper visibility', () => {
     background: { image: 'https://example.com/a.png', strength: 60, panelOpacity: 35, blur: 0, brightness: 100, position: 'cover' },
   })
   assert.match(frosted['--dsw-alias-bg-layer-2'].light, /^rgba\(244, 238, 220, 0\.35\)$/)
-  assert.match(frosted['--dsw-alias-bg-base'].light, /^rgba\(253, 246, 227, 0\.4\)$/)
+  assert.match(frosted['--dsw-alias-bg-base'].light, /^rgba\(253, 246, 227, 0\.508\)$/)
 })
 
 test('copy lists resolve in order or at random', () => {
@@ -199,6 +203,15 @@ test('copy rules and the wallpaper compile to scoped CSS', () => {
   assert.match(wallCss, /background-size:contain/)
   assert.match(wallCss, /blur\(4px\) brightness\(90%\)/)
   assert.equal(model.buildWallpaperCss({ image: '' }), '')
+
+  // With palettes the wallpaper gets a scheme-aware scrim so text keeps contrast.
+  const theme = model.defaultTheme('t', 'T')
+  const scrimmed = model.buildWallpaperCss(
+    { image: 'https://example.com/a.png', strength: 80, blur: 0, brightness: 100, position: 'cover' },
+    model.resolvePalettes(theme),
+  )
+  assert.match(scrimmed, /linear-gradient\(rgba\(253, 246, 227, 0\.4\d+\),rgba\(253, 246, 227, 0\.4\d+\)\),url\(/)
+  assert.match(scrimmed, /body\[data-ds-dark-theme\]::before\{background-image:linear-gradient\(rgba\(45, 53, 59,/)
 })
 
 test('locale dictionaries are complete and agree between zh and en', () => {
@@ -279,8 +292,48 @@ test('the boot hint carries the backdrop colors and the wallpaper', () => {
     background: { image: 'https://example.com/a.png', strength: 40, blur: 8, brightness: 80, position: 'cover' },
   })
   assert.deepEqual(wallpapered.wallpaper, {
-    image: 'https://example.com/a.png', blur: 8, brightness: 80, position: 'cover',
+    image: 'https://example.com/a.png',
+    blur: 8,
+    brightness: 80,
+    position: 'cover',
+    scrim: {
+      light: 'rgba(253, 246, 227, 0.28)',
+      dark: 'rgba(45, 53, 59, 0.28)',
+    },
   })
+})
+
+test('preset themes adopt updated preset designs while keeping user edits', () => {
+  const design = model.presetDesign('demiurge')
+  const base = JSON.parse(JSON.stringify(design))
+  // Pretend the previous preset shipped an older hero and an older surface.
+  base.hero = { image: 'https://example.com/old.svg', size: 20 }
+  base.light = { ...base.light, surface: '#000000' }
+
+  const theme = model.demiurgeTheme()
+  theme.preset = 'demiurge'
+  theme.presetVersion = 0
+  theme.presetBase = base
+  theme.hero = { image: 'https://example.com/old.svg', size: 20 }
+  theme.light = { ...base.light, accent: '#123456' }
+
+  const doc = model.normalizeDocument({ version: 3, activeThemeId: theme.id, themes: [theme] })
+  const synced = doc.themes[0]
+  assert.equal(synced.presetVersion, model.PRESET_VERSION)
+  // Untouched fields follow the new preset design…
+  assert.deepEqual(synced.hero, design.hero)
+  assert.equal(synced.light.surface, design.light.surface)
+  // …while the field the user changed survives.
+  assert.equal(synced.light.accent, '#123456')
+
+  // A theme that predates preset linking is adopted by its preset name.
+  const adopted = model.normalizeDocument({
+    version: 3,
+    themes: [{ id: 'legacy', name: '德谬歌', light: { accent: '#abcdef' } }],
+  }).themes[0]
+  assert.equal(adopted.preset, 'demiurge')
+  assert.equal(adopted.presetVersion, model.PRESET_VERSION)
+  assert.equal(adopted.light.accent, '#abcdef')
 })
 
 test('mounts, registers the page and applies palette edits immediately', async () => {

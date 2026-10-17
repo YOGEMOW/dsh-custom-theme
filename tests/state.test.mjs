@@ -153,6 +153,40 @@ test('a boot wallpaper may point at an uploaded asset', () => {
   assert.match(bootInjections(document)[0].text, /\/dsh-theme-studio\/asset\/abc123\.png/)
 })
 
+test('a boot wallpaper scrim is validated and injected', () => {
+  const document = normalizeDocument({
+    boot: {
+      light: '#fdf6e3',
+      dark: '#2d353b',
+      wallpaper: {
+        image: 'https://example.com/a.png',
+        blur: 0,
+        brightness: 100,
+        position: 'cover',
+        scrim: { light: 'rgba(253, 246, 227, 0.4)', dark: 'rgba(45, 53, 59, 0.4)' },
+      },
+    },
+    state: { version: 3 },
+  })
+  assert.deepEqual(document.boot.wallpaper.scrim, {
+    light: 'rgba(253, 246, 227, 0.4)',
+    dark: 'rgba(45, 53, 59, 0.4)',
+  })
+  const text = bootInjections(document)[0].text
+  assert.match(text, /linear-gradient\(rgba\(253, 246, 227, 0\.4\),rgba\(253, 246, 227, 0\.4\)\),url\(/)
+  assert.match(text, /body\[data-ds-dark-theme\]::before\{background-image:linear-gradient\(rgba\(45, 53, 59, 0\.4\),/)
+
+  const invalid = normalizeDocument({
+    boot: {
+      light: '#fdf6e3',
+      dark: '#2d353b',
+      wallpaper: { image: 'https://example.com/a.png', scrim: { light: 'red', dark: 'blue' } },
+    },
+    state: { version: 3 },
+  })
+  assert.equal(invalid.boot.wallpaper.scrim, null)
+})
+
 test('the Host half registers the route and the boot injection', async () => {
   // The boot injection reads the live document, which may already be customized
   // on the machine running the tests; point DSH_HOME at an empty directory so the
