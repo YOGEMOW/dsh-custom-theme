@@ -204,7 +204,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   }
 
   function defaultMusic() {
-    return { src: "", enabled: false, volume: 45, loop: true };
+    return { src: "", enabled: false, volume: 45, loop: true, pauseWhenHidden: true };
   }
 
   function normalizeMusic(input) {
@@ -215,6 +215,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       enabled: source.enabled === true,
       volume: Number.isFinite(volume) ? Math.round(clamp(volume, 0, 100)) : 45,
       loop: source.loop !== false,
+      pauseWhenHidden: source.pauseWhenHidden !== false,
     };
   }
 
@@ -225,7 +226,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       light: defaultPalette(false),
       dark: defaultPalette(true),
       separateDark: true,
-      background: { image: "", strength: 0, panelOpacity: 100, blur: 0, brightness: 100, position: "cover" },
+      background: { image: "", strength: 0, panelOpacity: 100, scrim: 100, blur: 0, brightness: 100, position: "cover" },
       hero: { image: "", size: 34 },
       music: defaultMusic(),
       copy: { headline: emptyList(), preview: emptyList(), placeholderHero: emptyList(), placeholderDefault: emptyList() },
@@ -265,6 +266,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       image: sanitizeImageUrl(source.image),
       strength: num(source.strength, 0, 0, 100),
       panelOpacity: num(source.panelOpacity, 100, 0, 100),
+      scrim: num(source.scrim, 100, 0, 150),
       blur: num(source.blur, 0, 0, 40),
       brightness: num(source.brightness, 100, 30, 200),
       position: source.position === "contain" ? "contain" : "cover",
@@ -527,6 +529,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       image: svgDataUrl(demiurgeFallbackWallpaperSvg()),
       strength: 55,
       panelOpacity: 100,
+      scrim: 70,
       blur: 3,
       brightness: 100,
       position: "cover",
@@ -745,10 +748,12 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     return parts.join("\n");
   }
 
-  /** Scrim opacity over the wallpaper: enough to keep text readable at any strength. */
+  /** Scrim opacity over the wallpaper: a theme-colored veil that keeps text readable. */
   function wallpaperScrimAlpha(background) {
+    const strength = clamp(Number(background.scrim === undefined ? 100 : background.scrim) || 0, 0, 150);
+    if (strength <= 0) return 0;
     const visible = clamp(Number(background.strength) || 0, 0, 100) / 100;
-    return 0.12 + visible * 0.40;
+    return Math.min(0.85, (0.12 + visible * 0.40) * (strength / 100));
   }
 
   /** Fixed wallpaper layer behind the translucent application surfaces. */
@@ -761,10 +766,10 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       `filter:blur(${background.blur}px) brightness(${background.brightness}%);${scale}`,
     ].join("");
     const url = cssString(background.image);
-    if (palettes === undefined || palettes === null) {
+    const scrim = wallpaperScrimAlpha(background);
+    if (palettes === undefined || palettes === null || scrim <= 0.005) {
       return `body::before{${base}background-image:url(${url});}`;
     }
-    const scrim = wallpaperScrimAlpha(background);
     const light = alpha(palettes.light.surface, scrim);
     const dark = alpha(palettes.dark.surface, scrim);
     return [
@@ -787,10 +792,12 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
           blur: theme.background.blur,
           brightness: theme.background.brightness,
           position: theme.background.position,
-          scrim: {
-            light: alpha(resolved.light.surface, scrim),
-            dark: alpha(resolved.dark.surface, scrim),
-          },
+          scrim: scrim <= 0.005
+            ? null
+            : {
+              light: alpha(resolved.light.surface, scrim),
+              dark: alpha(resolved.dark.surface, scrim),
+            },
         },
     };
   }
@@ -964,6 +971,34 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     }
   }
 
+  let pausedForHidden = false;
+
+  /**
+   * Pause while the window is hidden (minimized / another tab) and resume when
+   * it comes back, when the theme asks for it (`music.pauseWhenHidden`).
+   */
+  function onVisibilityChange() {
+    const player = ensureAudio();
+    if (player === null) return;
+    const theme = activeTheme(viewStore.get().doc);
+    const music = theme.music ?? defaultMusic();
+    if (music.enabled !== true || music.src === "") {
+      pausedForHidden = false;
+      return;
+    }
+    if (document.hidden) {
+      if (music.pauseWhenHidden !== false && !player.paused) {
+        player.pause();
+        pausedForHidden = true;
+      }
+      return;
+    }
+    if (pausedForHidden) {
+      pausedForHidden = false;
+      player.play().catch(() => {});
+    }
+  }
+
   /**
    * Keep the audio element in sync with the active theme's music settings.
    * Playback is per-theme: switching themes switches the track; disabling or
@@ -988,15 +1023,17 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     const shouldPlay = music.enabled === true && src !== "";
     if (!shouldPlay) {
       player.pause();
+      pausedForHidden = false;
       clearGesture();
       return;
     }
+    if (document.hidden && music.pauseWhenHidden !== false) return;
     if (!player.paused) return;
     player.play().catch(() => {
       if (gestureCleanup !== null) return;
       const resume = () => {
         clearGesture();
-        player.play().catch(() => {});
+        if (!document.hidden) player.play().catch(() => {});
       };
       document.addEventListener("pointerdown", resume, { once: true, capture: true });
       document.addEventListener("keydown", resume, { once: true, capture: true });
@@ -1012,6 +1049,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       audio.pause();
       audio.removeAttribute("src");
     }
+    pausedForHidden = false;
     clearGesture();
   }
 
@@ -1687,6 +1725,11 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
             value: theme.background.brightness, min: 30, max: 200, suffix: "%",
             onChange: (brightness) => setBackground({ brightness }),
           })),
+        h(Row, { title: t("bg.scrim"), description: t("bg.scrim.desc") },
+          h(RangeField, {
+            value: theme.background.scrim, min: 0, max: 150, suffix: "%",
+            onChange: (scrim) => setBackground({ scrim }),
+          })),
         h(Row, { title: t("bg.position") },
           h(Segmented, {
             value: theme.background.position,
@@ -1724,6 +1767,12 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
             checked: theme.music.loop,
             onChange: (loop) => setMusic({ loop }),
             label: t("music.loop"),
+          })),
+        h(Row, { title: t("music.pauseHidden"), description: t("music.pauseHidden.desc") },
+          h(Switch, {
+            checked: theme.music.pauseWhenHidden,
+            onChange: (pauseWhenHidden) => setMusic({ pauseWhenHidden }),
+            label: t("music.pauseHidden"),
           }))),
 
       h(Group, { label: t("group.hero") },
@@ -1813,6 +1862,8 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "bg.blur.desc": "0–40px",
     "bg.brightness": "亮度",
     "bg.brightness.desc": "30%–200%",
+    "bg.scrim": "文字遮罩",
+    "bg.scrim.desc": "壁纸上的同色遮罩强度，越高段落文字越清楚（0 关闭）",
     "bg.position": "铺满方式",
     "bg.position.cover": "铺满",
     "bg.position.contain": "适应",
@@ -1872,6 +1923,8 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "music.pick": "选择本地音乐",
     "music.volume": "音量",
     "music.loop": "循环播放",
+    "music.pauseHidden": "最小化时暂停",
+    "music.pauseHidden.desc": "窗口最小化或切到后台时暂停，回到界面继续播放",
     "status.saving": "保存中…",
     "status.saved": "已保存",
     "status.error": "保存失败：",
@@ -1929,6 +1982,8 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "bg.blur.desc": "0–40px",
     "bg.brightness": "Brightness",
     "bg.brightness.desc": "30%–200%",
+    "bg.scrim": "Text scrim",
+    "bg.scrim.desc": "Strength of the theme-colored veil over the wallpaper; higher keeps paragraph text clearer (0 disables)",
     "bg.position": "Fit",
     "bg.position.cover": "Cover",
     "bg.position.contain": "Contain",
@@ -1988,6 +2043,8 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "music.pick": "Pick local audio",
     "music.volume": "Volume",
     "music.loop": "Loop",
+    "music.pauseHidden": "Pause when minimized",
+    "music.pauseHidden.desc": "Pause while the window is minimized or in the background, resume when it returns",
     "status.saving": "Saving…",
     "status.saved": "Saved",
     "status.error": "Save failed: ",
@@ -2133,6 +2190,13 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       modeStore.set(ctx.theme.getTheme().preference);
       return ctx.on("theme/change", (snapshot) => modeStore.set(snapshot.preference));
     }, "dsh-custom-theme: mode preference");
+
+    // Pause / resume background music with window visibility (minimize, tab switch).
+    ctx.effect(() => {
+      if (typeof document.addEventListener !== "function") return () => {};
+      document.addEventListener("visibilitychange", onVisibilityChange);
+      return () => document.removeEventListener("visibilitychange", onVisibilityChange);
+    }, "dsh-custom-theme: music visibility");
 
     ctx.effect(() => () => {
       if (tokenDisposer !== null) {

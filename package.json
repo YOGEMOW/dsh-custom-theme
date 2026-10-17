@@ -1,6 +1,6 @@
 {
   "name": "dsh-custom-theme",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "DSH 自定义主题：多套主题可新建与切换，配色、背景图、背景音乐、首屏立绘与多条文案（顺序或随机）都可修改。 · DSH Custom Theme: switchable themes with palettes, wallpaper, background music, hero artwork and multi-line copy.",
   "type": "module",
   "main": "lib/index.js",

@@ -107,7 +107,7 @@ test('music settings normalize per theme', () => {
     themes: [{
       id: 't',
       name: 'T',
-      music: { src: '/dsh-theme-studio/asset/abc123.mp3', enabled: true, volume: 500, loop: false },
+      music: { src: '/dsh-theme-studio/asset/abc123.mp3', enabled: true, volume: 500, loop: false, pauseWhenHidden: false },
     }],
   })
   const music = doc.themes[0].music
@@ -115,12 +115,14 @@ test('music settings normalize per theme', () => {
   assert.equal(music.enabled, true)
   assert.equal(music.volume, 100)
   assert.equal(music.loop, false)
+  assert.equal(music.pauseWhenHidden, false)
 
   const invalid = model.normalizeDocument({
     version: 3,
     themes: [{ id: 't', name: 'T', music: { src: 'javascript:alert(1)', volume: 'x' } }],
   }).themes[0].music
   assert.equal(invalid.src, '')
+  assert.equal(invalid.pauseWhenHidden, true, 'pause-when-minimized defaults on')
   assert.equal(invalid.volume, 45)
   assert.equal(invalid.enabled, false)
 })
@@ -334,6 +336,43 @@ test('preset themes adopt updated preset designs while keeping user edits', () =
   assert.equal(adopted.preset, 'demiurge')
   assert.equal(adopted.presetVersion, model.PRESET_VERSION)
   assert.equal(adopted.light.accent, '#abcdef')
+})
+
+test('the wallpaper scrim is configurable per theme', () => {
+  const theme = model.defaultTheme('t', 'T')
+  const palettes = model.resolvePalettes(theme)
+
+  const off = model.normalizeDocument({
+    version: 3,
+    themes: [{
+      id: 't',
+      name: 'T',
+      background: { image: 'https://example.com/a.png', strength: 80, scrim: 0 },
+    }],
+  }).themes[0]
+  assert.equal(off.background.scrim, 0)
+  const offCss = model.buildWallpaperCss(off.background, palettes)
+  assert.match(offCss, /url\("https:\/\/example\.com\/a\.png"\)/)
+  assert.ok(!offCss.includes('linear-gradient'), 'scrim 0 disables the veil')
+  assert.equal(model.buildBootHint(off).wallpaper.scrim, null)
+
+  const clamped = model.normalizeDocument({
+    version: 3,
+    themes: [{ id: 't', name: 'T', background: { image: 'https://example.com/a.png', scrim: 500 } }],
+  }).themes[0]
+  assert.equal(clamped.background.scrim, 150)
+
+  const strong = model.normalizeDocument({
+    version: 3,
+    themes: [{
+      id: 't',
+      name: 'T',
+      background: { image: 'https://example.com/a.png', strength: 60, scrim: 150 },
+    }],
+  }).themes[0]
+  const strongCss = model.buildWallpaperCss(strong.background, palettes)
+  assert.match(strongCss, /linear-gradient\(rgba\(253, 246, 227, 0\.54\),/)
+  assert.match(model.buildBootHint(strong).wallpaper.scrim.light, /^rgba\(253, 246, 227, 0\.54\)$/)
 })
 
 test('mounts, registers the page and applies palette edits immediately', async () => {
