@@ -1146,6 +1146,30 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     });
   }
 
+  /** Restart one sequence field at its first entry. */
+  function resetCopyCursor(field) {
+    const view = currentView();
+    const theme = activeTheme(view.doc);
+    const list = theme.copy[field];
+    if (list.items.length === 0) return;
+    const doc = {
+      ...view.doc,
+      themes: view.doc.themes.map((item) => item.id === theme.id
+        ? { ...item, cursor: { ...item.cursor, [field]: 0 } }
+        : item),
+    };
+    const next = {
+      ...view,
+      doc,
+      copy: {
+        values: { ...view.copy.values, [field]: list.items[0] },
+        indices: { ...view.copy.indices, [field]: 0 },
+      },
+    };
+    setView(next);
+    scheduleSave(next);
+  }
+
   /** Show the next (or a random) copy entry for one field immediately. */
   function rerollCopy(field) {
     const view = currentView();
@@ -1460,13 +1484,14 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     ];
   }
 
-  function CopyListEditor({ t, theme, field, title, description, onChange, onReroll }) {
+  function CopyListEditor({ t, theme, field, title, description, onChange, onReroll, onReset }) {
     const view = useView();
     const list = theme.copy[field];
     const items = list.items;
     const setList = (patch) => onChange({ ...list, ...patch });
     const setItems = (nextItems) => setList({ items: nextItems });
     const shown = view.copy.values[field] || "";
+    const shownIndex = items.length === 0 ? -1 : (view.copy.indices[field] ?? 0);
     return h("div", { className: "ts-copy" },
       h("div", { className: "ts-copyHead" },
         h("div", { className: "ts-copyTitle" }, title),
@@ -1480,6 +1505,13 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
             ],
             onChange: (mode) => setList({ mode }),
           }),
+          list.mode === "sequence" && items.length > 0
+            ? h("button", {
+              type: "button",
+              className: "ts-link",
+              onClick: () => onReset(),
+            }, t("copy.first"))
+            : null,
           h("button", {
             type: "button",
             className: "ts-link",
@@ -1495,7 +1527,10 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       description ? h("div", { className: "ts-copyDesc" }, description) : null,
       items.length === 0
         ? h("div", { className: "ts-copyEmpty" }, t("copy.empty"))
-        : items.map((item, index) => h("div", { key: index, className: "ts-copyItem" },
+        : items.map((item, index) => h("div", {
+          key: index,
+          className: index === shownIndex ? "ts-copyItem ts-copyItemOn" : "ts-copyItem",
+        },
           h("span", { className: "ts-copyIndex" }, String(index + 1)),
           h("input", {
             type: "text",
@@ -1541,7 +1576,9 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
             onClick: () => setItems(items.filter((_, itemIndex) => itemIndex !== index)),
           }, "×"))),
       h("div", { className: "ts-copyPreview" },
-        t("copy.showing"),
+        items.length === 0
+          ? t("copy.showing")
+          : t("copy.showingIndex").replace("{n}", String(shownIndex + 1)),
         h("span", { className: "ts-copyPreviewValue" }, items.length === 0 ? "—" : shown || "—")));
   }
 
@@ -1800,6 +1837,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
           description: t(copyDescriptions[field]),
           onChange: (next) => setCopy(field, next),
           onReroll: () => rerollCopy(field),
+          onReset: () => resetCopyCursor(field),
         }))),
 
       h("div", { className: "ts-foot" },
@@ -1871,7 +1909,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "hero.image.desc": "替换首屏标题前的品牌图形；可选本地图片，也可填 https 链接",
     "hero.size.title": "立绘尺寸",
     "hero.size.desc": "首屏立绘的显示宽度",
-    "copy.hint": "每个文案字段可以放多条：按页面加载顺序轮换（顺序），或随机挑一条（随机）。留空使用内置文案。",
+    "copy.hint": "每个文案字段可以放多条。顺序：每次打开页面按列表顺序轮换一条，游标存在主题里，所以「当前显示」是第几条以高亮行为准；随机：每次随机挑一条。留空使用内置文案。",
     "copy.title.headline": "首屏标题",
     "copy.title.preview": "角标文案",
     "copy.title.placeholderHero": "首屏输入框提示",
@@ -1889,6 +1927,8 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "copy.reroll": "换一条",
     "copy.empty": "留空使用内置文案",
     "copy.showing": "当前显示：",
+    "copy.showingIndex": "当前显示（第 {n} 条）：",
+    "copy.first": "回到第一条",
     "copy.itemPlaceholder": "输入一条文案，留空则忽略",
     "image.pick": "选择本地图片",
     "image.replace": "选择其他图片",
@@ -1991,7 +2031,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "hero.image.desc": "Replaces the brand mark before the hero headline; pick a local image or paste an https URL",
     "hero.size.title": "Hero size",
     "hero.size.desc": "Rendered width of the hero artwork",
-    "copy.hint": "Each field takes several lines: rotate in order on every page load, or pick one at random. Empty keeps the shipped copy.",
+    "copy.hint": "Each field takes several lines. Sequence: rotates one line per page load, the cursor lives in the theme, so the highlighted row is the one shown; Random: picks one at random. Empty keeps the shipped copy.",
     "copy.title.headline": "Hero headline",
     "copy.title.preview": "Badge",
     "copy.title.placeholderHero": "Hero placeholder",
@@ -2009,6 +2049,8 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "copy.reroll": "Next",
     "copy.empty": "Empty keeps the shipped copy",
     "copy.showing": "Showing:",
+    "copy.showingIndex": "Showing (line {n}):",
+    "copy.first": "First line",
     "copy.itemPlaceholder": "One line; empty lines are ignored",
     "image.pick": "Pick local image",
     "image.replace": "Pick another image",
@@ -2132,7 +2174,9 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
 .ts-copyActions{display:flex;align-items:center;gap:12px;margin-left:auto}
 .ts-copyDesc{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}
 .ts-copyNote{padding:12px 16px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px;border-bottom:.5px solid var(--dsw-alias-border-l1)}
-.ts-copyItem{display:flex;align-items:center;gap:8px}
+.ts-copyItem{display:flex;align-items:center;gap:8px;border-radius:8px;padding:2px 6px;margin:0 -6px}
+.ts-copyItemOn{background:var(--dsw-alias-state-business-tertiary);box-shadow:inset 2px 0 0 var(--dsw-alias-brand-primary)}
+.ts-copyItemOn .ts-copyIndex{color:var(--dsw-alias-brand-primary);font-weight:600}
 .ts-copyIndex{flex:none;width:18px;color:var(--dsw-alias-label-tertiary);font-size:12px;font-variant-numeric:tabular-nums;text-align:right}
 .ts-copyInput{flex:1;min-width:0}
 .ts-copyEmpty{color:var(--dsw-alias-label-tertiary);font-size:12px}
