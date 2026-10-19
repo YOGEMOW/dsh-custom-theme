@@ -552,6 +552,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   const PRESETS = Object.freeze([
     { id: "everforest", label: "presets.everforest" },
     { id: "demiurge", label: "presets.demiurge" },
+    { id: "demiurge-complete", label: "presets.demiurgeComplete" },
   ]);
 
   /* ------------------------------------------------------------------ *
@@ -1354,24 +1355,49 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
    * Presets and asset uploads
    * ------------------------------------------------------------------ */
 
-  /** Append one preset theme. 德谬歌 keeps the wallpaper of the current theme. */
-  function addPreset(presetId) {
+  /**
+   * Append one preset theme. 德谬歌 keeps the wallpaper of the current theme;
+   * 德谬歌·完整 downloads the bundled document (wallpaper + hero inside) from the
+   * Host, falling back to the basic design when that route is unavailable.
+   */
+  async function addPreset(presetId) {
     const view = currentView();
     const current = activeTheme(view.doc);
     const id = `theme-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
+
+    if (presetId === "demiurge-complete") {
+      try {
+        const payload = await request("/preset/demiurge-complete");
+        const source = payload.preset;
+        if (source !== null && typeof source === "object") {
+          const theme = normalizeTheme({ ...source, id }, 0);
+          theme.preset = null;
+          theme.presetVersion = 0;
+          theme.presetBase = null;
+          edit((doc) => ({ ...doc, themes: [...doc.themes, theme], activeThemeId: id }));
+          return;
+        }
+      } catch {
+        /* the Host may not serve the bundled preset yet: fall back below */
+      }
+    }
+
     let theme;
-    if (presetId === "demiurge") {
+    if (presetId === "demiurge" || presetId === "demiurge-complete") {
       const background = current.background.image === ""
         ? undefined
         : { ...clone(current.background) };
       theme = demiurgeTheme(background);
+      theme.preset = "demiurge";
+      theme.presetVersion = PRESET_VERSION;
+      theme.presetBase = presetDesign("demiurge");
     } else {
       theme = defaultTheme("everforest", "Everforest");
+      theme.preset = "everforest";
+      theme.presetVersion = PRESET_VERSION;
+      theme.presetBase = presetDesign("everforest");
     }
     theme.id = id;
-    theme.preset = presetId;
-    theme.presetVersion = PRESET_VERSION;
-    theme.presetBase = presetDesign(presetId);
     edit((doc) => ({ ...doc, themes: [...doc.themes, theme], activeThemeId: id }));
   }
 
@@ -2191,6 +2217,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "presets.label": "预设主题",
     "presets.everforest": "＋ Everforest",
     "presets.demiurge": "＋ 德谬歌",
+    "presets.demiurgeComplete": "＋ 德谬歌·完整",
     "group.music": "背景音乐",
     "music.hint": "背景音乐按主题保存。浏览器要求先与页面交互一次才会播放；之后切换主题会自动切歌。",
     "music.enabled": "启用背景音乐",
@@ -2325,6 +2352,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "presets.label": "Presets",
     "presets.everforest": "+ Everforest",
     "presets.demiurge": "+ Demiurge",
+    "presets.demiurgeComplete": "+ Demiurge (full)",
     "group.music": "Background music",
     "music.hint": "Music is saved per theme. Browsers start audio only after the first interaction; switching themes then switches the track.",
     "music.enabled": "Enable background music",
@@ -2613,7 +2641,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   exports.__edit = edit;
   exports.__rerollCopy = rerollCopy;
   exports.__applyView = applyView;
-  exports.__themeOps = { addTheme, duplicateTheme, removeTheme, setActiveTheme };
+  exports.__themeOps = { addTheme, duplicateTheme, removeTheme, setActiveTheme, addPreset };
   exports.__agentPresets = { applyAgentPreset }; 
   return module.exports;
 } });

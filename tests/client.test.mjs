@@ -429,6 +429,12 @@ test('themes remember which agent presets activate them', () => {
   assert.equal(model.presetLinkLabel([], 'zzz'), 'zzz')
 })
 
+test('the bundled complete preset is offered next to the built-in designs', () => {
+  const ids = model.PRESETS.map((preset) => preset.id)
+  assert.ok(ids.includes('demiurge'), 'the basic design stays available')
+  assert.ok(ids.includes('demiurge-complete'), 'the bundled complete preset is offered')
+})
+
 test('mounts, registers the page and applies palette edits immediately', async () => {
   const elements = []
   globalThis.document = {
@@ -436,7 +442,26 @@ test('mounts, registers the page and applies palette edits immediately', async (
     head: { appendChild: (element) => elements.push(element) },
     documentElement: { attributes: {}, setAttribute(name) { this.attributes[name] = ""; } },
   }
-  globalThis.fetch = async () => ({ ok: false, status: 404, json: async () => ({ ok: false, error: "missing" }) })
+  globalThis.fetch = async (url) => {
+    if (String(url).includes("/preset/demiurge-complete")) {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          preset: {
+            name: "德谬歌·完整",
+            light: { accent: "#e58bb4", surface: "#fff7fc", ink: "#4a3a57", contrast: 100 },
+            background: { image: "data:image/webp;base64,AAAA", strength: 100, blur: 5, position: "cover" },
+            hero: { image: "", size: 96 },
+            copy: { headline: { mode: "sequence", items: ["德谬歌"] } },
+            presets: ["chat"],
+          },
+        }),
+      }
+    }
+    return { ok: false, status: 404, json: async () => ({ ok: false, error: "missing" }) }
+  }
 
   const injections = []
   const overrides = []
@@ -508,4 +533,17 @@ test('mounts, registers the page and applies palette edits immediately', async (
   // An unclaimed preset keeps whatever theme the user chose.
   plugin.__agentPresets.applyAgentPreset('ptc')
   assert.equal(plugin.__stores.viewStore.get().doc.activeThemeId, 'agent-theme')
+
+  // The bundled complete preset is downloaded through the Host route and lands
+  // as an independent theme (no design sync, wallpaper included).
+  const beforeComplete = plugin.__stores.viewStore.get().doc.themes.length
+  await plugin.__themeOps.addPreset('demiurge-complete')
+  const withComplete = plugin.__stores.viewStore.get().doc
+  assert.equal(withComplete.themes.length, beforeComplete + 1)
+  const complete = withComplete.themes.find((item) => item.name === '德谬歌·完整')
+  assert.ok(complete, 'the bundled preset must add a theme')
+  assert.equal(complete.background.image, 'data:image/webp;base64,AAAA')
+  assert.equal(complete.light.contrast, 100)
+  assert.deepEqual(complete.presets, ['chat'])
+  assert.equal(complete.preset, null, 'the bundled preset does not join design sync')
 })

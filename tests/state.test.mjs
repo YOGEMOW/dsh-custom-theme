@@ -234,6 +234,48 @@ test('the Host half serves the agent preset roster', async () => {
   assert.equal(payload.presets[1].broken, false)
 })
 
+test('the Host half serves the bundled preset documents', async () => {
+  const routes = []
+  const ctx = {
+    get: () => undefined,
+    on: () => () => {},
+    inject: (names, callback) => {
+      callback({
+        get: (name) => (name === 'webServer'
+          ? { register: (route) => { routes.push(route); return () => {} } }
+          : undefined),
+        effect: (callback) => callback(),
+      })
+    },
+  }
+  applyHost(ctx)
+
+  const call = async (url) => {
+    const response = {
+      status: 0,
+      body: '',
+      headers: {},
+      writeHead(status, headers) { this.status = status; this.headers = headers },
+      end(body) { this.body = body },
+    }
+    await routes[0].handler({ url, method: 'GET', headers: {} }, response)
+    return response
+  }
+
+  const preset = await call('/dsh-theme-studio/preset/demiurge-complete')
+  assert.equal(preset.status, 200)
+  const payload = JSON.parse(preset.body)
+  assert.equal(payload.preset.name, '德谬歌·完整')
+  assert.match(payload.preset.background.image, /^data:image\/webp;base64,/)
+  assert.match(payload.preset.hero.image, /^data:image\/webp;base64,/)
+  assert.equal(payload.preset.light.contrast, 100)
+
+  assert.equal((await call('/dsh-theme-studio/preset/nope')).status, 404)
+  // The route only accepts lowercase slugs, so encoded path tricks never reach readFile.
+  assert.equal((await call('/dsh-theme-studio/preset/..%2F..%2Fsecret')).status, 404)
+  assert.equal((await call('/dsh-theme-studio/preset/Demiurge')).status, 404)
+})
+
 test('the Host half registers the route and the boot injection', async () => {
   // The boot injection reads the live document, which may already be customized
   // on the machine running the tests; point DSH_HOME at an empty directory so the
