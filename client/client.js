@@ -868,6 +868,27 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     ].join("\n");
   }
 
+  /**
+   * Narrow viewports turn the sidebar into an overlay drawer, so its surface must
+   * stay nearly opaque; the media query uses !important to beat the inline tokens
+   * that paint the translucent desktop look.
+   */
+  function buildMobileSurfaceCss(background, palettes) {
+    if (background === undefined || background === null || background.image === "") return "";
+    if (palettes === undefined || palettes === null) return "";
+    const rule = (palette, scope) => {
+      const contrast = clamp(Number(palette.contrast) || 0, 0, 100) / 100;
+      const sidebar = palette.sidebar === "" || palette.sidebar === undefined
+        ? mix(palette.surface, palette.ink, (0.025 + 0.075 * contrast) * 0.35)
+        : palette.sidebar;
+      return `body${scope}{--dsw-specific-sidebar-fill:${alpha(sidebar, 0.96)} !important;`
+        + `--dsw-alias-bg-base:${alpha(palette.surface, 0.9)} !important;`
+        + `--dsw-alias-bg-layer-1:${alpha(palette.surface, 0.97)} !important;`
+        + `--dsw-alias-bg-layer-2:${alpha(palette.surface, 1)} !important;}`;
+    };
+    return `@media (max-width: 1023px){${rule(palettes.light, "")}${rule(palettes.dark, "[data-ds-dark-theme]")}}`;
+  }
+
   /** Minimal boot hint the Host paints before this bundle runs. */
   function buildBootHint(theme, palettes) {
     const resolved = palettes ?? resolvePalettes(theme);
@@ -939,7 +960,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   let ctxRef = null;
   let tokenDisposer = null;
   let tokenKey = "";
-  let sheetKey = { copy: null, wall: null };
+  let sheetKey = { copy: null, wall: null, mobile: null };
   let studioTag = null;
   let copyTag = null;
   let heroDisposer = null;
@@ -1208,9 +1229,10 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     if (copyTag !== null) {
       const copyCss = buildCopyCss(view.copy.values);
       const wallCss = buildWallpaperCss(theme.background, view.resolved);
-      if (sheetKey.copy !== copyCss || sheetKey.wall !== wallCss) {
-        copyTag.textContent = [copyCss, wallCss].filter((part) => part !== "").join("\n");
-        sheetKey = { copy: copyCss, wall: wallCss };
+      const mobileCss = buildMobileSurfaceCss(theme.background, view.resolved);
+      if (sheetKey.copy !== copyCss || sheetKey.wall !== wallCss || sheetKey.mobile !== mobileCss) {
+        copyTag.textContent = [copyCss, wallCss, mobileCss].filter((part) => part !== "").join("\n");
+        sheetKey = { copy: copyCss, wall: wallCss, mobile: mobileCss };
       }
     }
 
@@ -2633,6 +2655,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     syncCopyValues,
     buildCopyCss,
     buildWallpaperCss,
+    buildMobileSurfaceCss,
     buildBootHint,
     pickCopy,
   };

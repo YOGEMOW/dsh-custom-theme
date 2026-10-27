@@ -7,7 +7,7 @@
 A custom-theme plugin for DeepSeek Harness: switchable themes with palettes, wallpaper effects,
 hero artwork, multi-line copy, background music and Agent-preset linking.
 
-- 当前版本：**0.9.0**
+- 当前版本：**0.9.1**
 - 设置入口：**设置 → 自定义主题**（`settings.section`，id `theme-studio`）
 - 仓库：<https://github.com/YOGEMOW/dsh-custom-theme>
 
@@ -75,7 +75,9 @@ plugin_manager install_bundle    # target: <克隆目录>
 - **主界面可见度**：页面底色和侧栏透出壁纸的程度（最多透出 82%，不会完全消失）；
 - **子界面不透明度**：设置面板、弹窗、卡片、输入框等浮层（默认 100%，避免浮层文字和背后内容重叠）；
 - **文字遮罩**：壁纸上方叠一层与主题同色的纱。`0` 关闭、`100` 默认、`150` 更压得住亮背景；
-  壁纸开启时，次级/段落文字会自动向正文色靠拢，解决「浅白色段落看不清」。
+  壁纸开启时，次级/段落文字会自动向正文色靠拢，解决「浅白色段落看不清」；
+- **窄屏（≤1023px）自动提高不透明度**：手机/平板上的侧栏是覆盖式抽屉，启用壁纸时
+  侧栏与页面底色会被提到约 90–96% 不透明，避免抽屉里的列表和背后的会话文字互相透出。
 
 原理细节见[实现细节 → 壁纸与 token 管线](#壁纸与-token-管线)。
 
@@ -254,6 +256,9 @@ Agent 预设（Session 的 `agentPreset` 投影）决定一个会话用哪套工
 首屏由宿主的 `boot` 提示提前画好底色、壁纸与同一层遮罩，避免首帧白闪。壁纸 CSS 与 token 都按值缓存，
 编辑文案时不会重复重算。
 
+窄屏（`max-width: 1023px`）另有一条 `!important` 规则，把侧栏填充、页面底色和两层浮层提到接近不透明
+——移动端侧栏抽屉是覆盖在会话之上的，半透明会让两边的文字叠在一起；桌面端不受影响。
+
 ### 插槽与文案覆盖
 
 - **立绘**：占用 `conversation.hero.brand.mark`，用 `<img>` 顶替内置小鱼；
@@ -293,13 +298,13 @@ node tests/state.test.mjs
 node tests/client.test.mjs
 ```
 
-30 项断言覆盖：文档往返与缺失回退、boot 提示校验与注入（含遮罩）、bundled preset 路由（完整预设）、
+31 项断言覆盖：文档往返与缺失回退、boot 提示校验与注入（含遮罩）、bundled preset 路由（完整预设）、
 assets 魔数识别/存储/路径校验、Agent 预设列表路由、路由注册、默认主题、v2→v3 迁移、
 德谬歌预设内容与版本同步（保留用户字段与壁纸）、音乐配置归一化（含最小化暂停）、
 文字遮罩 0/150% 的开关与强度、空白文案行的丢弃与占位行、壁纸 CSS 缓存的复用与失效、
 Agent 预设绑定（多选增删/大小写/显示名）与自动切主题、完整预设下载后创建独立主题、
 主题 id 去重、token 双方案取值、壁纸可见度对底色 alpha 与文字对比度的影响、
-文案顺序/随机轮换、文案与壁纸 CSS、boot hint，以及挂载后修改强调色**立即**反映到 token。
+文案顺序/随机轮换、文案与壁纸 CSS、**窄屏近不透明规则**、boot hint，以及挂载后修改强调色**立即**反映到 token。
 
 CI（`.github/workflows/test.yml`）在 push / PR 时于 `ubuntu-latest` 跑这两个套件。
 
@@ -315,6 +320,8 @@ CI（`.github/workflows/test.yml`）在 push / PR 时于 `ubuntu-latest` 跑这�
 
 ## 变更记录
 
+- **0.9.1**：修移动端侧栏抽屉里的文字重叠——壁纸开启时，窄屏（≤1023px）自动把侧栏/页面底色
+  提到约 90–96% 不透明，抽屉里的列表不会再和背后的会话文字互相透出；桌面端观感不变。
 - **0.9.0**：新增**德谬歌·完整**预设——随包携带壁纸（WebP）、首屏立绘（640×640 WebP）与整套文案，
   由宿主 `GET /dsh-theme-studio/preset/<id>` 读取 `presets/*.json`，点一下就还原完整观感；音乐不在包内。
 - **0.8.0**：Agent 预设联动改成**从宿主预设列表里多选**（显示名称 + id，勾选即保存），不再手填 id；
