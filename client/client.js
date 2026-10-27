@@ -869,9 +869,11 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   }
 
   /**
-   * Narrow viewports turn the sidebar into an overlay drawer, so its surface must
-   * stay nearly opaque; the media query uses !important to beat the inline tokens
-   * that paint the translucent desktop look.
+   * Narrow viewports turn the sidebar into an overlay drawer on top of the session.
+   * Only the sidebar surface becomes opaque: a translucent drawer would let the
+   * conversation text show through its list, while the page itself must keep the
+   * wallpaper (so `--dsw-alias-bg-base` is deliberately left alone). The media
+   * query uses !important to beat the inline tokens of the desktop look.
    */
   function buildMobileSurfaceCss(background, palettes) {
     if (background === undefined || background === null || background.image === "") return "";
@@ -881,10 +883,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       const sidebar = palette.sidebar === "" || palette.sidebar === undefined
         ? mix(palette.surface, palette.ink, (0.025 + 0.075 * contrast) * 0.35)
         : palette.sidebar;
-      return `body${scope}{--dsw-specific-sidebar-fill:${alpha(sidebar, 0.96)} !important;`
-        + `--dsw-alias-bg-base:${alpha(palette.surface, 0.9)} !important;`
-        + `--dsw-alias-bg-layer-1:${alpha(palette.surface, 0.97)} !important;`
-        + `--dsw-alias-bg-layer-2:${alpha(palette.surface, 1)} !important;}`;
+      return `body${scope}{--dsw-specific-sidebar-fill:${alpha(sidebar, 0.94)} !important;}`;
     };
     return `@media (max-width: 1023px){${rule(palettes.light, "")}${rule(palettes.dark, "[data-ds-dark-theme]")}}`;
   }

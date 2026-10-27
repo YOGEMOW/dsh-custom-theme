@@ -429,16 +429,18 @@ test('themes remember which agent presets activate them', () => {
   assert.equal(model.presetLinkLabel([], 'zzz'), 'zzz')
 })
 
-test('narrow viewports get near-opaque surfaces over the wallpaper', () => {
+test('narrow viewports make only the sidebar opaque over the wallpaper', () => {
   const theme = model.defaultTheme('t', 'T')
   const palettes = model.resolvePalettes(theme)
   assert.equal(model.buildMobileSurfaceCss({ image: '' }, palettes), '')
 
   const css = model.buildMobileSurfaceCss({ image: 'https://example.com/a.png' }, palettes)
   assert.match(css, /@media \(max-width: 1023px\)/)
-  assert.match(css, /--dsw-specific-sidebar-fill:rgba\([^)]+, 0\.96\) !important/)
-  assert.match(css, /--dsw-alias-bg-base:rgba\(253, 246, 227, 0\.9\) !important/)
+  assert.match(css, /--dsw-specific-sidebar-fill:rgba\([^)]+, 0\.94\) !important/)
   assert.match(css, /body\[data-ds-dark-theme\]\{/)
+  // The page background keeps the wallpaper: no base/layer override.
+  assert.ok(!css.includes('--dsw-alias-bg-base'))
+  assert.ok(!css.includes('--dsw-alias-bg-layer-1'))
 })
 
 test('the bundled complete preset is offered next to the built-in designs', () => {
