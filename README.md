@@ -7,7 +7,7 @@
 A custom-theme plugin for DeepSeek Harness: switchable themes with palettes, wallpaper effects,
 hero artwork, multi-line copy, background music and Agent-preset linking.
 
-- 当前版本：**0.9.2**
+- 当前版本：**0.9.3**
 - 设置入口：**设置 → 自定义主题**（`settings.section`，id `theme-studio`）
 - 仓库：<https://github.com/YOGEMOW/dsh-custom-theme>
 
@@ -111,6 +111,8 @@ Agent 预设（Session 的 `agentPreset` 投影）决定一个会话用哪套工
   列表来自宿主 `agentPresets.list()`（名称 + id，加载失败的预设会标注）；
 - 客户端占用两个无害的会话槽位（`conversation.input.dock`、`conversation.hero.options`）各挂一个
   不渲染的观察组件，通过标准 Hook `useProjection("agentPreset")` 读取当前会话预设，一变就切主题；
+- **只在预设变化时切换**：页面加载 / DSH 重启后的第一次观测只作为基线，不会覆盖你上次手动选的主题；
+  之后用户给空白会话选预设、或切到运行另一预设的会话时才会切主题；
 - 没有任何主题绑定该预设时，保持用户当前主题不动；
 - 设置页底部显示「当前会话的 Agent 预设」，用来核对是否命中。
 
@@ -320,6 +322,9 @@ CI（`.github/workflows/test.yml`）在 push / PR 时于 `ubuntu-latest` 跑这�
 
 ## 变更记录
 
+- **0.9.3**：修 DSH 更新后的主题回弹——Agent 预设观察器现在只把**第一次观测**当作基线，页面加载/重启不再按当前会话的
+  `standard` 预设把主题切回 Everforest；只有预设真正变化时才切换。另核对：新旧插槽、34 个主题 token、宿主路由、
+  文案 DOM 钩子均与新版本兼容。
 - **0.9.2**：修 0.9.1 的副作用——上一版把页面底色也提不透明，导致移动端看不到壁纸；现在窄屏只把**侧栏**
   提到 94% 不透明，抽屉不再透出会话文字，页面壁纸照常显示。
 - **0.9.1**：修移动端侧栏抽屉里的文字重叠——壁纸开启时，窄屏（≤1023px）自动把侧栏/页面底色

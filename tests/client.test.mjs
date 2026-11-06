@@ -536,16 +536,23 @@ test('mounts, registers the page and applies palette edits immediately', async (
   assert.ok(injections.includes('conversation.input.dock'), 'the composer dock must host the preset watcher')
   assert.ok(injections.includes('conversation.hero.options'), 'the hero options row must host the preset watcher')
 
-  // A Session switching to a linked Agent preset activates its theme.
+  // The preset linked to a Session is applied on change, not on first sight: a
+  // DSH restart must keep the theme the user picked last.
   plugin.__edit((doc) => ({
     ...doc,
     themes: doc.themes.concat([{ ...doc.themes[0], id: 'agent-theme', name: 'Agent theme', presets: ['standard'] }]),
   }))
-  plugin.__agentPresets.applyAgentPreset('STANDARD')
+  const initialTheme = plugin.__stores.viewStore.get().doc.activeThemeId
+  plugin.__agentPresets.observeAgentPreset('ptc')
+  assert.equal(plugin.__stores.viewStore.get().doc.activeThemeId, initialTheme, 'the baseline must not switch')
+  plugin.__agentPresets.observeAgentPreset('STANDARD')
   assert.equal(plugin.__stores.viewStore.get().doc.activeThemeId, 'agent-theme')
   assert.equal(plugin.__stores.agentPresetStore.get(), 'STANDARD')
+  // Repeating the same preset (both watcher slots see it) stays a no-op.
+  plugin.__agentPresets.observeAgentPreset('standard')
+  assert.equal(plugin.__stores.viewStore.get().doc.activeThemeId, 'agent-theme')
   // An unclaimed preset keeps whatever theme the user chose.
-  plugin.__agentPresets.applyAgentPreset('ptc')
+  plugin.__agentPresets.observeAgentPreset('cordis')
   assert.equal(plugin.__stores.viewStore.get().doc.activeThemeId, 'agent-theme')
 
   // The bundled complete preset is downloaded through the Host route and lands

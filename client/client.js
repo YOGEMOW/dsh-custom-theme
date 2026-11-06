@@ -1053,15 +1053,29 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   function PresetWatcher({ useProjection }) {
     const preset = typeof useProjection === "function" ? useProjection("agentPreset") : undefined;
     useEffect(() => {
-      if (typeof preset === "string" && preset !== "") applyAgentPreset(preset);
+      if (typeof preset === "string" && preset !== "") observeAgentPreset(preset);
     }, [preset]);
     return null;
   }
 
-  /** Switch to the theme bound to `presetId`, when one exists and is not active. */
-  function applyAgentPreset(presetId) {
-    const view = currentView();
+  /**
+   * Last Agent preset this page observed. The first observation after load only
+   * records a baseline: restarting DSH (or refreshing the page) must keep the
+   * theme the user picked last instead of re-applying whatever preset the open
+   * Session already runs. Only a later change activates the linked theme — the
+   * user picking a preset for a blank Session, or switching to a Session that
+   * runs another preset.
+   */
+  let observedAgentPreset = null;
+
+  /** Record one projection value; activate a linked theme only on a real change. */
+  function observeAgentPreset(presetId) {
+    if (typeof presetId !== "string" || presetId === "") return;
+    const previous = observedAgentPreset;
+    observedAgentPreset = presetId;
     agentPresetStore.set(presetId);
+    if (previous === null || previous === presetId) return;
+    const view = currentView();
     const theme = themeForAgentPreset(view.doc, presetId);
     if (theme === null || theme.id === view.doc.activeThemeId) return;
     setActiveTheme(theme.id);
@@ -2664,6 +2678,6 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   exports.__rerollCopy = rerollCopy;
   exports.__applyView = applyView;
   exports.__themeOps = { addTheme, duplicateTheme, removeTheme, setActiveTheme, addPreset };
-  exports.__agentPresets = { applyAgentPreset }; 
+  exports.__agentPresets = { observeAgentPreset };
   return module.exports;
 } });
