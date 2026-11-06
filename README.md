@@ -7,7 +7,7 @@
 A custom-theme plugin for DeepSeek Harness: switchable themes with palettes, wallpaper effects,
 hero artwork, multi-line copy, background music and Agent-preset linking.
 
-- 当前版本：**0.9.3**
+- 当前版本：**0.9.4**
 - 设置入口：**设置 → 自定义主题**（`settings.section`，id `theme-studio`）
 - 仓库：<https://github.com/YOGEMOW/dsh-custom-theme>
 
@@ -77,7 +77,9 @@ plugin_manager install_bundle    # target: <克隆目录>
 - **文字遮罩**：壁纸上方叠一层与主题同色的纱。`0` 关闭、`100` 默认、`150` 更压得住亮背景；
   壁纸开启时，次级/段落文字会自动向正文色靠拢，解决「浅白色段落看不清」；
 - **窄屏（≤1023px）侧栏自动变实**：手机/平板上的侧栏是覆盖式抽屉，启用壁纸时只把**侧栏**
-  提到约 94% 不透明（避免抽屉列表和背后的会话文字互相透出）；页面底色不拦，壁纸照常显示。
+  提到约 94% 不透明（避免抽屉列表和背后的会话文字互相透出）；页面底色不拦，壁纸照常显示；
+- **弹窗/对话框保持不透明**：壁纸开启时，`aria-modal` 对话框（含第三方插件如 ds-harness-remote 的
+  「远程工作台」）会被强制成主题实色表面——它们常用 `--dsw-alias-bg-base` 上色，若不拦会透出背后文字。
 
 原理细节见[实现细节 → 壁纸与 token 管线](#壁纸与-token-管线)。
 
@@ -300,13 +302,13 @@ node tests/state.test.mjs
 node tests/client.test.mjs
 ```
 
-31 项断言覆盖：文档往返与缺失回退、boot 提示校验与注入（含遮罩）、bundled preset 路由（完整预设）、
+32 项断言覆盖：文档往返与缺失回退、boot 提示校验与注入（含遮罩）、bundled preset 路由（完整预设）、
 assets 魔数识别/存储/路径校验、Agent 预设列表路由、路由注册、默认主题、v2→v3 迁移、
 德谬歌预设内容与版本同步（保留用户字段与壁纸）、音乐配置归一化（含最小化暂停）、
 文字遮罩 0/150% 的开关与强度、空白文案行的丢弃与占位行、壁纸 CSS 缓存的复用与失效、
 Agent 预设绑定（多选增删/大小写/显示名）与自动切主题、完整预设下载后创建独立主题、
 主题 id 去重、token 双方案取值、壁纸可见度对底色 alpha 与文字对比度的影响、
-文案顺序/随机轮换、文案与壁纸 CSS、**窄屏近不透明规则**、boot hint，以及挂载后修改强调色**立即**反映到 token。
+文案顺序/随机轮换、文案与壁纸 CSS、**窄屏侧栏与弹窗不透明规则**、boot hint，以及挂载后修改强调色**立即**反映到 token。
 
 CI（`.github/workflows/test.yml`）在 push / PR 时于 `ubuntu-latest` 跑这两个套件。
 
@@ -322,6 +324,9 @@ CI（`.github/workflows/test.yml`）在 push / PR 时于 `ubuntu-latest` 跑这�
 
 ## 变更记录
 
+- **0.9.4**：修第三方弹窗的透字——壁纸开启时，`[role="dialog"][aria-modal="true"]`（以及 ds-harness-remote 的
+  `.dshRemotePage`「远程工作台」）强制使用主题实色背景，不再透出背后的会话文字；对话框标题、按钮、输入框
+  样式不变。
 - **0.9.3**：修 DSH 更新后的主题回弹——Agent 预设观察器现在只把**第一次观测**当作基线，页面加载/重启不再按当前会话的
   `standard` 预设把主题切回 Everforest；只有预设真正变化时才切换。另核对：新旧插槽、34 个主题 token、宿主路由、
   文案 DOM 钩子均与新版本兼容。

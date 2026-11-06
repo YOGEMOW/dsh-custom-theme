@@ -429,6 +429,16 @@ test('themes remember which agent presets activate them', () => {
   assert.equal(model.presetLinkLabel([], 'zzz'), 'zzz')
 })
 
+test('modal dialogs stay opaque over the wallpaper', () => {
+  const theme = model.defaultTheme('t', 'T')
+  const palettes = model.resolvePalettes(theme)
+  assert.equal(model.buildDialogSurfaceCss({ image: '' }, palettes), '')
+
+  const css = model.buildDialogSurfaceCss({ image: 'https://example.com/a.png' }, palettes)
+  assert.match(css, /\[role="dialog"\]\[aria-modal="true"\],\.dshRemotePage\{background-color:#fdf6e3 !important;\}/)
+  assert.match(css, /body\[data-ds-dark-theme\] .*background-color:#2d353b !important;/)
+})
+
 test('narrow viewports make only the sidebar opaque over the wallpaper', () => {
   const theme = model.defaultTheme('t', 'T')
   const palettes = model.resolvePalettes(theme)

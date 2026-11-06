@@ -888,6 +888,20 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     return `@media (max-width: 1023px){${rule(palettes.light, "")}${rule(palettes.dark, "[data-ds-dark-theme]")}}`;
   }
 
+  /**
+   * Modal dialogs must stay opaque while the wallpaper is on. Third-party plugins
+   * often paint a dialog with `--dsw-alias-bg-base`, which this theme deliberately
+   * makes translucent, so the page text behind shows through the dialog (the
+   * ds-harness-remote workbench dialog is one such case). A solid theme surface,
+   * rather than the frosted token, is used because `panelOpacity` may also be lowered.
+   */
+  function buildDialogSurfaceCss(background, palettes) {
+    if (background === undefined || background === null || background.image === "") return "";
+    if (palettes === undefined || palettes === null) return "";
+    return "[role=\"dialog\"][aria-modal=\"true\"],.dshRemotePage{background-color:" + palettes.light.surface + " !important;}"
+      + "body[data-ds-dark-theme] [role=\"dialog\"][aria-modal=\"true\"],body[data-ds-dark-theme] .dshRemotePage{background-color:" + palettes.dark.surface + " !important;}";
+  }
+
   /** Minimal boot hint the Host paints before this bundle runs. */
   function buildBootHint(theme, palettes) {
     const resolved = palettes ?? resolvePalettes(theme);
@@ -959,7 +973,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   let ctxRef = null;
   let tokenDisposer = null;
   let tokenKey = "";
-  let sheetKey = { copy: null, wall: null, mobile: null };
+  let sheetKey = { copy: null, wall: null, mobile: null, dialog: null };
   let studioTag = null;
   let copyTag = null;
   let heroDisposer = null;
@@ -1243,9 +1257,10 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       const copyCss = buildCopyCss(view.copy.values);
       const wallCss = buildWallpaperCss(theme.background, view.resolved);
       const mobileCss = buildMobileSurfaceCss(theme.background, view.resolved);
-      if (sheetKey.copy !== copyCss || sheetKey.wall !== wallCss || sheetKey.mobile !== mobileCss) {
-        copyTag.textContent = [copyCss, wallCss, mobileCss].filter((part) => part !== "").join("\n");
-        sheetKey = { copy: copyCss, wall: wallCss, mobile: mobileCss };
+      const dialogCss = buildDialogSurfaceCss(theme.background, view.resolved);
+      if (sheetKey.copy !== copyCss || sheetKey.wall !== wallCss || sheetKey.mobile !== mobileCss || sheetKey.dialog !== dialogCss) {
+        copyTag.textContent = [copyCss, wallCss, mobileCss, dialogCss].filter((part) => part !== "").join("\n");
+        sheetKey = { copy: copyCss, wall: wallCss, mobile: mobileCss, dialog: dialogCss };
       }
     }
 
@@ -2669,6 +2684,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     buildCopyCss,
     buildWallpaperCss,
     buildMobileSurfaceCss,
+    buildDialogSurfaceCss,
     buildBootHint,
     pickCopy,
   };
