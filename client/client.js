@@ -1084,6 +1084,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
    * ------------------------------------------------------------------ */
 
   const toastStore = createStore([]);
+  const systemNotifyStore = createStore({ state: "idle", detail: "", at: 0 });
   const toastTimers = new Map();
   let toastSeq = 0;
   let chimeContext = null;
@@ -1143,14 +1144,45 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     }
   }
 
+  /** Notify status is shown in settings so a silent platform drop is visible. */
+  function setSystemNotify(state, detail = "") {
+    systemNotifyStore.set({ state, detail, at: Date.now() });
+  }
+
+  function systemStatusText(status) {
+    switch (status.state) {
+      case "unsupported":
+        return translate("notify.system.state.unsupported");
+      case "permission":
+        return translate("notify.system.state.permission");
+      case "sent":
+        return translate("notify.system.state.sent");
+      case "shown":
+        return translate("notify.system.state.shown");
+      case "error":
+        return translate("notify.system.state.error");
+      default:
+        return translate("notify.system.state.idle");
+    }
+  }
+
   function showSystemNotification(entry) {
     try {
-      if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+      if (typeof Notification === "undefined") {
+        setSystemNotify("unsupported");
+        return;
+      }
+      if (Notification.permission !== "granted") {
+        setSystemNotify("permission", Notification.permission);
+        return;
+      }
       const notification = new Notification(entry.title, {
         body: entry.sessionId === null ? translate("notify.testDetail") : translate("notify.systemBody"),
         tag: `dsh-custom-theme:${entry.sessionId ?? "test"}`,
         silent: true,
       });
+      notification.onshow = () => setSystemNotify("shown");
+      notification.onerror = () => setSystemNotify("error", "onerror");
       notification.onclick = () => {
         try {
           window.focus();
@@ -1160,8 +1192,9 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
         if (entry.sessionId !== null) openSessionById(entry.sessionId);
         notification.close();
       };
-    } catch {
-      /* platform without notifications */
+      setSystemNotify("sent");
+    } catch (error) {
+      setSystemNotify("error", String(error?.message ?? error));
     }
   }
 
@@ -2284,6 +2317,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     const [rosterToken, setRosterToken] = useState(0);
     const [presetPanel, setPresetPanel] = useState("");
     const [permission, setPermission] = useState(currentNotificationPermission);
+    const systemStatus = useSyncExternalStore(systemNotifyStore.subscribe, systemNotifyStore.get);
     useEffect(() => {
       setPermission(currentNotificationPermission());
     }, []);
@@ -2479,9 +2513,18 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
         h(Row, { title: t("notify.system"), description: t("notify.system.desc") },
           h(Switch, {
             checked: notify.system,
-            onChange: (system) => setNotify({ system }),
+            onChange: (system) => {
+              setNotify({ system });
+              if (system) requestNotificationPermission();
+            },
             label: t("notify.system"),
           })),
+        h("div", { className: "ts-copyNote" },
+          t("notify.system.diag") + "：" + systemStatusText(systemStatus)
+            + (systemStatus.detail === "" ? "" : `（${systemStatus.detail}）`)),
+        typeof window !== "undefined" && window.dshDesktop !== undefined
+          ? h("div", { className: "ts-copyNote" }, t("notify.system.desktopNote"))
+          : null,
         h(Row, { title: t("notify.permission"), description: t("notify.permission.desc") },
           h("div", { className: "ts-inlineControls" },
             h("span", { className: "ts-permission", "data-state": permission }, permissionText),
@@ -2801,6 +2844,15 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "notify.cards.desc": "右下角弹出赛璐璐风格的通知卡片",
     "notify.system": "系统通知",
     "notify.system.desc": "同时调用操作系统通知中心（需要授权）",
+    "notify.system.diag": "系统通知自检",
+    "notify.system.state.idle": "尚未尝试",
+    "notify.system.state.sent": "已交给系统；若没弹出，多半是 DSH 桌面端没有 Windows 通知身份",
+    "notify.system.state.shown": "系统已显示",
+    "notify.system.state.unsupported": "当前环境不支持",
+    "notify.system.state.permission": "未授权，请先请求授权",
+    "notify.system.state.error": "发送失败",
+    "notify.system.desktopNote": "提示：DSH 桌面端没有向 Windows 注册通知身份（系统通知设置里看不到 DeepSeek Harness），系统 toast 可能被系统丢弃；应用内卡片不受影响。需要跨应用置顶提醒可安装 dsh-popup-cards。",
+
     "notify.permission": "通知权限",
     "notify.permission.desc": "浏览器 / 系统里报告的通知授权状态",
     "notify.permission.request": "请求授权",
@@ -2980,6 +3032,15 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "notify.cards.desc": "Cel-shaded cards in the bottom-right corner",
     "notify.system": "System notifications",
     "notify.system.desc": "Also post to the operating system notification center (permission required)",
+    "notify.system.diag": "System notification self-check",
+    "notify.system.state.idle": "not attempted yet",
+    "notify.system.state.sent": "handed to the OS; if nothing appears, DSH Desktop likely has no Windows notification identity",
+    "notify.system.state.shown": "shown by the OS",
+    "notify.system.state.unsupported": "unsupported here",
+    "notify.system.state.permission": "not granted — request permission first",
+    "notify.system.state.error": "failed to send",
+    "notify.system.desktopNote": "Note: DSH Desktop does not register a Windows notification identity (DeepSeek Harness is absent from the system notification list), so OS toasts may be dropped; in-app cards are unaffected. Install dsh-popup-cards for cross-app topmost alerts.",
+
     "notify.permission": "Notification permission",
     "notify.permission.desc": "Permission state reported by the browser or OS",
     "notify.permission.request": "Request permission",

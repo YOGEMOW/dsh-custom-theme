@@ -7,7 +7,7 @@
 A custom-theme plugin for DeepSeek Harness: switchable themes with palettes, wallpaper effects,
 hero artwork, multi-line copy, background music and Agent-preset linking.
 
-- 当前版本：**0.11.0**
+- 当前版本：**0.11.1**
 - 设置入口：**设置 → 自定义主题**（`settings.section`，id `theme-studio`）
 - 仓库：<https://github.com/YOGEMOW/dsh-custom-theme>
 
@@ -143,7 +143,11 @@ Agent 完成一轮回复时提醒你——像 ChatGPT 那样，在你切到别�
 功能形态参考 [dsh-popup-cards](https://github.com/Leo1958923515/dsh-popup-cards)（那是 Windows 常驻置顶的
 WPF 卡片），本插件走**应用内 + Web 通知**的实现，跨平台，且点击能直接回到会话。
 
-已知边界：审批事件在自动策略立即放行时也会被记录（卡片可能来得比决定晚一点）；长任务（workflow）没有会话归属，
+已知边界：**Windows 系统通知**受 DSH 桌面端限制——它没有向 Windows 注册通知身份（系统通知设置里看不到
+DeepSeek Harness），系统 toast 可能被 Windows 静默丢弃，设置页的「系统通知自检」会显示状态；应用内卡片不受影响。
+需要跨应用置顶提醒可安装 [dsh-popup-cards](https://github.com/Leo1958923515/dsh-popup-cards)。
+
+其他边界：审批事件在自动策略立即放行时也会被记录（卡片可能来得比决定晚一点）；长任务（workflow）没有会话归属，
 卡片不提供跳转；卡片是提醒，不能替你批准或回答任何操作；系统通知需要用户授权，权限被拒绝时不弹系统消息，
 但应用内卡片仍可用。
 
@@ -354,6 +358,8 @@ CI（`.github/workflows/test.yml`）在 push / PR 时于 `ubuntu-latest` 跑这�
 
 ## 变更记录
 
+- **0.11.1**：消息通知设置新增「系统通知自检」与桌面端限制说明——开启系统通知时自动请求权限，
+  显示 `Notification` 的真实状态（已发送 / 系统已显示 / 未授权 / 失败原因），避免系统 toast 被静默丢弃时无从判断。
 - **0.11.0**：消息通知扩展为**审批 / 提问 / 计划确认 / 长任务结束**四类——宿主监听 `approval/request`、
   `user-questions/request`（含 plan-review）与 `workflow/end`，经 SSE 推送；客户端按类型独立开关、分类徽标与
   色条，并保留「仅不在前台时提醒」的默认行为。
