@@ -461,7 +461,18 @@ test('the bundled complete preset is offered next to the built-in designs', () =
 
 test('notification settings normalize with safe defaults', () => {
   const doc = model.normalizeDocument({ version: 3, themes: [{ id: 't', name: 'T' }] })
-  assert.deepEqual(doc.notify, { enabled: true, cards: true, system: false, sound: false, always: false, durationMs: 6000 })
+  assert.deepEqual(doc.notify, {
+    enabled: true,
+    cards: true,
+    system: false,
+    sound: false,
+    always: false,
+    approvals: true,
+    questions: true,
+    plans: true,
+    workflows: true,
+    durationMs: 6000,
+  })
 
   const tuned = model.normalizeDocument({
     version: 3,

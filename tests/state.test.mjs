@@ -19,6 +19,8 @@ import {
   documentFile,
   normalizeDocument,
   readDocument,
+  recentAlerts,
+  resetAlerts,
   resolveHarnessHome,
   saveAsset,
   sniffAsset,
@@ -274,6 +276,115 @@ test('the Host half serves the bundled preset documents', async () => {
   // The route only accepts lowercase slugs, so encoded path tricks never reach readFile.
   assert.equal((await call('/dsh-theme-studio/preset/..%2F..%2Fsecret')).status, 404)
   assert.equal((await call('/dsh-theme-studio/preset/Demiurge')).status, 404)
+})
+
+function alertContext() {
+  const listeners = new Map()
+  const routes = []
+  const ctx = {
+    get: () => undefined,
+    on(name, callback) {
+      listeners.set(name, callback)
+      return () => {}
+    },
+    inject(names, callback) {
+      callback({
+        get: (name) => (name === 'webServer'
+          ? { register: (route) => { routes.push(route); return () => {} } }
+          : undefined),
+        effect: (callback) => callback(),
+      })
+    },
+  }
+  applyHost(ctx)
+  return { listeners, routes }
+}
+
+test('Host alerts capture approvals, plan reviews and workflow runs', async () => {
+  resetAlerts()
+  const { listeners } = alertContext()
+
+  const approval = listeners.get('approval/request')
+  assert.ok(approval, 'the approval waterfall must be observed')
+  const delegated = []
+  await approval(
+    { agent: { id: 'session-1' }, toolName: 'bash', displayReason: { zh: '需要写入文件' } },
+    async () => {
+      delegated.push('next')
+      return 'allowed-once'
+    },
+  )
+  assert.deepEqual(delegated, ['next'], 'the observer must delegate instead of claiming')
+
+  const dispatch = listeners.get('tools/pre-execute')
+  assert.ok(dispatch, 'tool dispatch must be observed for question tools')
+  await dispatch({ name: 'ask_user_question', agent: { id: 'session-2' } }, async () => undefined)
+  await dispatch({ name: 'exit_plan_mode', agent: { session: { id: 'session-2' } } }, async () => undefined)
+  await dispatch({ name: 'bash', agent: { id: 'session-2' } }, async () => undefined)
+
+  const questions = listeners.get('user-questions/request')
+  await questions(
+    {
+      agent: { id: 'session-1' },
+      questions: [{
+        header: '计划',
+        intent: { kind: 'plan-review', approve: '继续', display: { question: { zh: '确认这份计划？' } } },
+      }],
+    },
+    async () => ({ answers: [] }),
+  )
+
+  listeners.get('workflow/end')(
+    { id: 'workflow-1', meta: { name: 'review-pass', description: '并行审查' } },
+    { stopReason: 'completed', agentsStarted: 3 },
+  )
+
+  const alerts = recentAlerts()
+  assert.deepEqual(
+    alerts.map((alert) => alert.kind),
+    ['approval', 'question', 'plan', 'plan', 'workflow'],
+  )
+  assert.equal(alerts[0].sessionId, 'session-1')
+  assert.equal(alerts[0].title, 'bash')
+  assert.equal(alerts[0].detail, '需要写入文件')
+  assert.equal(alerts[3].title, '确认这份计划？')
+  assert.equal(alerts[4].title, 'review-pass')
+})
+
+test('the Host streams alerts over SSE', async () => {
+  resetAlerts()
+  const { listeners, routes } = alertContext()
+  assert.equal(routes.length, 1)
+
+  const response = {
+    status: 0,
+    headers: {},
+    chunks: [],
+    ended: false,
+    writeHead(status, headers) {
+      this.status = status
+      this.headers = headers
+    },
+    write(chunk) {
+      this.chunks.push(String(chunk))
+    },
+    end() {
+      this.ended = true
+    },
+    on() {},
+  }
+  const request = { url: '/dsh-theme-studio/alerts', method: 'GET', headers: {}, on() {} }
+  await routes[0].handler(request, response)
+
+  assert.equal(response.status, 200)
+  assert.match(response.headers['content-type'], /text\/event-stream/)
+
+  listeners.get('workflow/end')({ meta: { name: 'streamed' } }, { stopReason: 'completed' })
+  const body = response.chunks.join('')
+  assert.match(body, /^retry: 3000$/m)
+  assert.match(body, /^id: \d+$/m)
+  assert.ok(body.includes('"kind":"workflow"'))
+  assert.ok(body.includes('"title":"streamed"'))
 })
 
 test('the Host half registers the route and the boot injection', async () => {

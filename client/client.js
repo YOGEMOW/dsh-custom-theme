@@ -248,6 +248,10 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     system: false,
     sound: false,
     always: false,
+    approvals: true,
+    questions: true,
+    plans: true,
+    workflows: true,
     durationMs: 6000,
   });
 
@@ -264,6 +268,10 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       system: source.system === true,
       sound: source.sound === true,
       always: source.always === true,
+      approvals: source.approvals !== false,
+      questions: source.questions !== false,
+      plans: source.plans !== false,
+      workflows: source.workflows !== false,
       durationMs: Number.isFinite(duration) ? Math.round(clamp(duration, 0, 60000)) : NOTIFY_DEFAULTS.durationMs,
     };
   }
@@ -1079,6 +1087,10 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   const toastTimers = new Map();
   let toastSeq = 0;
   let chimeContext = null;
+  const sessionTitles = new Map();
+  let lastHostAlertId = 0;
+  const alertCooldowns = new Map();
+  let alertSource = null;
 
   function notifySettings() {
     return normalizeNotify(viewStore.get().doc.notify);
@@ -1168,6 +1180,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     const entry = {
       id: `toast-${toastSeq}`,
       sessionId: input.sessionId ?? null,
+      kind: input.kind ?? "done",
       title: input.title ?? translate("notify.testTitle"),
       detail: input.detail ?? translate("notify.done"),
     };
@@ -1183,6 +1196,103 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     if (settings.sound) playChime();
     if (settings.system) showSystemNotification(entry);
     return entry.id;
+  }
+
+  /** Badge label for one toast kind. */
+  function toastBadge(kind) {
+    return {
+      done: translate("notify.badge"),
+      approval: translate("notify.kind.approval"),
+      question: translate("notify.kind.question"),
+      plan: translate("notify.kind.plan"),
+      workflow: translate("notify.kind.workflow"),
+    }[kind] ?? translate("notify.badge");
+  }
+
+  function alertKindEnabled(settings, kind) {
+    return {
+      approval: settings.approvals,
+      question: settings.questions,
+      plan: settings.plans,
+      workflow: settings.workflows,
+    }[kind] === true;
+  }
+
+  function alertDetail(alert) {
+    switch (alert.kind) {
+      case "approval":
+        return translate("notify.needApproval")
+          + (typeof alert.title === "string" && alert.title !== "" ? ` · ${alert.title}` : "")
+          + (typeof alert.detail === "string" && alert.detail !== "" ? ` — ${alert.detail}` : "");
+      case "question":
+        return alert.detail || alert.title || translate("notify.needAnswer");
+      case "plan":
+        return alert.detail || alert.title || translate("notify.needPlan");
+      case "workflow":
+        return alert.detail || alert.title || translate("notify.workflowFallback");
+      default:
+        return translate("notify.done");
+    }
+  }
+
+  /** One Host alert frame: dedupe, gate, throttle and turn it into a toast. */
+  function handleHostAlert(alert) {
+    if (alert === null || typeof alert !== "object") return;
+    const id = Number(alert.id);
+    if (Number.isFinite(id)) {
+      if (id <= lastHostAlertId) return;
+      lastHostAlertId = id;
+    }
+    const at = Number(alert.at);
+    if (Number.isFinite(at) && Date.now() - at > 120000) return; // stale replay
+    const settings = notifySettings();
+    if (!settings.enabled || !alertKindEnabled(settings, alert.kind)) return;
+    if (!settings.cards && !settings.system) return;
+    if (!settings.always && !viewerIsAway()) return;
+    const sessionId = typeof alert.sessionId === "string" && alert.sessionId !== "" ? alert.sessionId : null;
+    const key = `${alert.kind}:${sessionId ?? alert.title ?? "workflow"}`;
+    const now = Date.now();
+    if (now - (alertCooldowns.get(key) ?? Number.NEGATIVE_INFINITY) < NOTIFY_COOLDOWN_MS) return;
+    alertCooldowns.set(key, now);
+    const title = sessionId !== null
+      ? sessionTitles.get(sessionId) ?? translate("notify.unknownSession")
+      : alert.title || translate("notify.workflowFallback");
+    pushToast({
+      sessionId,
+      title,
+      detail: alertDetail(alert),
+      kind: alert.kind,
+      card: settings.cards,
+      sticky: alert.kind !== "workflow",
+    });
+  }
+
+  /** Subscribe to the Host alert stream (approvals, questions, plans, workflows). */
+  function syncAlertStream() {
+    if (alertSource !== null) return;
+    if (typeof window === "undefined" || typeof EventSource !== "function") return;
+    try {
+      alertSource = new EventSource(`${ROUTE}/alerts?since=latest`);
+      alertSource.onmessage = (event) => {
+        try {
+          handleHostAlert(JSON.parse(event.data));
+        } catch {
+          /* malformed frame */
+        }
+      };
+    } catch {
+      alertSource = null;
+    }
+  }
+
+  function stopAlertStream() {
+    if (alertSource === null) return;
+    try {
+      alertSource.close();
+    } catch {
+      /* already closed */
+    }
+    alertSource = null;
   }
 
   function sessionTitle(entry) {
@@ -1205,11 +1315,11 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
 
   function ToastCard({ item }) {
     const t = (key) => translate(key);
-    return h("div", { className: "ts-toast", role: "status" },
+    return h("div", { className: "ts-toast", role: "status", "data-kind": item.kind ?? "done" },
       h("span", { className: "ts-toastStripe", "aria-hidden": true }),
       h("div", { className: "ts-toastBody" },
         h("div", { className: "ts-toastTop" },
-          h("span", { className: "ts-toastBadge" }, t("notify.badge")),
+          h("span", { className: "ts-toastBadge" }, toastBadge(item.kind)),
           h("span", { className: "ts-toastTime" }, t("notify.now"))),
         h("div", { className: "ts-toastTitle" }, item.title),
         h("div", { className: "ts-toastDetail" }, item.detail),
@@ -1266,10 +1376,31 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     const lastNotified = useRef(new Map());
     const toasts = useSyncExternalStore(toastStore.subscribe, toastStore.get);
 
+    // Returning to DSH means the in-app prompt is visible again: drop the stack.
+    useEffect(() => {
+      if (typeof window === "undefined") return undefined;
+      const restore = () => {
+        if (document.visibilityState === "visible") {
+          for (const item of toastStore.get()) dismissToast(item.id);
+        }
+      };
+      document.addEventListener("visibilitychange", restore);
+      window.addEventListener("focus", restore);
+      return () => {
+        document.removeEventListener("visibilitychange", restore);
+        window.removeEventListener("focus", restore);
+      };
+    }, []);
+
     useEffect(() => {
       const current = byId ?? {};
       const before = previous.current;
       previous.current = current;
+      for (const entry of Object.values(current)) {
+        if (entry !== null && typeof entry === "object" && typeof entry.id === "string") {
+          sessionTitles.set(entry.id, sessionTitle(entry));
+        }
+      }
       if (before === null) return; // baseline: never alert about what was already finished
       const settings = notifySettings();
       if (!settings.enabled) return;
@@ -1537,6 +1668,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     syncHeroSlot();
     syncPresetWatcher();
     syncNotifyLayer();
+    syncAlertStream();
     syncMusic(theme);
     document.documentElement.setAttribute(READY_ATTR, "");
   }
@@ -2320,6 +2452,30 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
             onChange: (cards) => setNotify({ cards }),
             label: t("notify.cards"),
           })),
+        h(Row, { title: t("notify.approvals") },
+          h(Switch, {
+            checked: notify.approvals,
+            onChange: (approvals) => setNotify({ approvals }),
+            label: t("notify.approvals"),
+          })),
+        h(Row, { title: t("notify.questions") },
+          h(Switch, {
+            checked: notify.questions,
+            onChange: (questions) => setNotify({ questions }),
+            label: t("notify.questions"),
+          })),
+        h(Row, { title: t("notify.plans") },
+          h(Switch, {
+            checked: notify.plans,
+            onChange: (plans) => setNotify({ plans }),
+            label: t("notify.plans"),
+          })),
+        h(Row, { title: t("notify.workflows") },
+          h(Switch, {
+            checked: notify.workflows,
+            onChange: (workflows) => setNotify({ workflows }),
+            label: t("notify.workflows"),
+          })),
         h(Row, { title: t("notify.system"), description: t("notify.system.desc") },
           h(Switch, {
             checked: notify.system,
@@ -2661,6 +2817,20 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "notify.testTitle": "测试通知",
     "notify.testDetail": "这是一条示例提醒，用来检查赛璐璐卡片的样式。",
     "notify.badge": "回复完成",
+    "notify.approvals": "审批请求",
+    "notify.questions": "提问",
+    "notify.plans": "计划确认",
+    "notify.workflows": "长任务结束",
+    "notify.kind.approval": "等待审批",
+    "notify.kind.question": "需要回答",
+    "notify.kind.plan": "计划待确认",
+    "notify.kind.workflow": "任务结束",
+    "notify.needApproval": "有工具正在等待你的审批",
+    "notify.needAnswer": "Agent 有一个问题需要你回答",
+    "notify.needPlan": "有一份计划等待你确认",
+    "notify.workflowFallback": "长任务已结束",
+    "notify.unknownSession": "一个会话",
+
     "notify.now": "刚刚",
     "notify.done": "Agent 已完成这一轮回复",
     "notify.open": "回到会话",
@@ -2826,6 +2996,20 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "notify.testTitle": "Test notification",
     "notify.testDetail": "A sample alert you can use to check the cel-shaded card.",
     "notify.badge": "Reply done",
+    "notify.approvals": "Approvals",
+    "notify.questions": "Questions",
+    "notify.plans": "Plan reviews",
+    "notify.workflows": "Long tasks",
+    "notify.kind.approval": "Approval needed",
+    "notify.kind.question": "Answer needed",
+    "notify.kind.plan": "Plan review",
+    "notify.kind.workflow": "Task finished",
+    "notify.needApproval": "A tool is waiting for your approval",
+    "notify.needAnswer": "The Agent has a question for you",
+    "notify.needPlan": "A plan is waiting for your review",
+    "notify.workflowFallback": "A long task finished",
+    "notify.unknownSession": "a session",
+
     "notify.now": "just now",
     "notify.done": "The Agent finished this reply",
     "notify.open": "Open session",
@@ -2950,6 +3134,10 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
 .ts-toast{pointer-events:auto;position:relative;display:flex;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border:2px solid var(--dsw-alias-label-primary);border-radius:14px;box-shadow:5px 5px 0 var(--dsw-alias-label-primary);overflow:hidden;animation:ts-toastIn .16s steps(3,end) both}
 .ts-toast:hover{transform:translate(-1px,-1px);box-shadow:6px 6px 0 var(--dsw-alias-label-primary)}
 .ts-toastStripe{width:10px;flex:none;background:var(--dsw-alias-brand-primary);border-right:2px solid var(--dsw-alias-label-primary)}
+.ts-toast[data-kind="approval"] .ts-toastStripe{background:var(--dsw-alias-state-warn-primary)}
+.ts-toast[data-kind="question"] .ts-toastStripe{background:var(--dsw-alias-state-business-primary)}
+.ts-toast[data-kind="plan"] .ts-toastStripe{background:var(--dsw-alias-brand-primary)}
+.ts-toast[data-kind="workflow"] .ts-toastStripe{background:var(--dsw-alias-state-success-primary)}
 .ts-toastBody{flex:1;min-width:0;padding:12px 14px 10px 12px;display:flex;flex-direction:column;gap:6px}
 .ts-toastTop{display:flex;align-items:center;justify-content:space-between;gap:8px}
 .ts-toastBadge{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;line-height:14px;padding:2px 7px;border-radius:6px;border:2px solid var(--dsw-alias-label-primary);background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-layer-1)}
@@ -3049,6 +3237,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
           /* already disposed with the plugin context */
         }
       }
+      stopAlertStream();
       if (saveTimer !== null) {
         clearTimeout(saveTimer);
         saveTimer = null;

@@ -7,7 +7,7 @@
 A custom-theme plugin for DeepSeek Harness: switchable themes with palettes, wallpaper effects,
 hero artwork, multi-line copy, background music and Agent-preset linking.
 
-- 当前版本：**0.10.0**
+- 当前版本：**0.11.0**
 - 设置入口：**设置 → 自定义主题**（`settings.section`，id `theme-studio`）
 - 仓库：<https://github.com/YOGEMOW/dsh-custom-theme>
 
@@ -23,7 +23,7 @@ hero artwork, multi-line copy, background music and Agent-preset linking.
 | 语义色 | 成功 / 错误 / 警告 / 次要 |
 | 背景图 | 本地图片或链接、主界面可见度 0–100%、子界面不透明度 0–100%、模糊 0–40px、亮度 30–200%、文字遮罩 0–150%、铺满 / 适应 |
 | 背景音乐 | 每套主题一首：本地音乐（mp3/wav/ogg/m4a/flac）或链接、启用、音量、循环、最小化暂停；切主题自动切歌 |
-| 消息通知 | **ChatGPT 式完成提醒**：Agent 完成回复且你不在 DSH 时，右下角弹出**赛璐璐风格卡片**（可另开系统通知、提示音）；点卡片回到对应会话 |
+| 消息通知 | **ChatGPT 式提醒**：回复完成、审批、提问、计划确认、长任务结束都会在你不在 DSH 时弹出**赛璐璐风格卡片**（可另开系统通知、提示音）；点卡片回到对应会话 |
 | 首屏立绘 | 本地图片或地址、显示宽度 16–200px |
 | 文案 | 4 个字段（首屏标题、角标、首屏输入框提示、会话输入框提示），每个字段可放多条：顺序轮换或随机 |
 
@@ -123,21 +123,29 @@ Agent 预设（Session 的 `agentPreset` 投影）决定一个会话用哪套工
 
 Agent 完成一轮回复时提醒你——像 ChatGPT 那样，在你切到别的窗口后才提示，不打断正在看的对话：
 
-- **触发**：主会话（不含子 Agent）从 `running` 变为空闲，且 DSH 不在前台/最小化；也可以在设置里改成
-  「窗口在前台时也提醒」；
+- **触发**（都要求 DSH 不在前台/最小化，除非打开「窗口在前台时也提醒」）：
+  - 主会话（不含子 Agent）从 `running` 变为空闲；
+  - **审批请求**（`approval/request`）；
+  - **提问**（`ask_user_question` 工具及 `user-questions/request`；计划确认按 `exit_plan_mode` 工具或
+    `intent.kind === 'plan-review'` 归类）；
+  - **长任务结束**（`workflow/end`，例如 workflow 多智能体运行）；
+  - 每类都有独立开关（审批 / 提问 / 计划 / 长任务），可只保留你关心的；
 - **应用内卡片**：右下角弹出，显示会话标题 +「回复完成」；点「回到会话」跳到对应会话，× 关闭；
   最多同时 3 张，同一会话 10 秒内不重复；
 - **系统通知**：需要浏览器/系统授权，点设置里的「请求授权」；授权后可与系统通知中心联动；
 - **提示音**：一段两音短提示（WebAudio 合成，不需要音频文件；受浏览器自动播放策略限制）；
-- **设置**：「消息通知」分组里的开关、权限状态、卡片停留时间（0 = 常驻）与「发送测试通知」按钮。
+- **设置**：「消息通知」分组里的总开关、四类事件开关、权限状态、卡片停留时间（0 = 常驻）与「发送测试通知」按钮；
+- **来源**：审批/提问/计划/长任务来自宿主事件，经宿主 `GET /dsh-theme-studio/alerts`（SSE）推给客户端；
+  回复完成仍由客户端按会话列表判断（带会话标题与子会话过滤）。
 
 视觉参考 [StyleKit · CelShading](https://www.stylekit.top/en/styles/cel-shading)：粗墨线描边、平涂色块、
 无渐变的硬投影、步进式出场动画；颜色全部取自当前主题 token，所以换主题后卡片跟着变。
 功能形态参考 [dsh-popup-cards](https://github.com/Leo1958923515/dsh-popup-cards)（那是 Windows 常驻置顶的
 WPF 卡片），本插件走**应用内 + Web 通知**的实现，跨平台，且点击能直接回到会话。
 
-已知边界：只覆盖「回复完成」，暂不覆盖审批/提问/计划确认；卡片是提醒，不能替你批准任何操作；
-系统通知需要用户授权，权限被拒绝时不弹系统消息，但应用内卡片仍可用。
+已知边界：审批事件在自动策略立即放行时也会被记录（卡片可能来得比决定晚一点）；长任务（workflow）没有会话归属，
+卡片不提供跳转；卡片是提醒，不能替你批准或回答任何操作；系统通知需要用户授权，权限被拒绝时不弹系统消息，
+但应用内卡片仍可用。
 
 ### 预设与同步
 
@@ -264,6 +272,7 @@ WPF 卡片），本插件走**应用内 + Web 通知**的实现，跨平台，�
 | `POST /dsh-theme-studio/asset` | 上传本地图片/音频 |
 | `GET /dsh-theme-studio/asset/<name>` | 提供上传的文件（Range） |
 | `GET /dsh-theme-studio/agent-presets` | Agent 预设列表（id / 名称 / 是否加载失败） |
+| `GET /dsh-theme-studio/alerts` | 审批 / 提问 / 计划 / 长任务的 SSE 提醒流 |
 | `GET /dsh-theme-studio/preset/<id>` | 随包预设文档（存在 `presets/*.json`） |
 
 ### 壁纸与 token 管线
@@ -323,13 +332,13 @@ node tests/state.test.mjs
 node tests/client.test.mjs
 ```
 
-34 项断言覆盖：文档往返与缺失回退、boot 提示校验与注入（含遮罩）、bundled preset 路由（完整预设）、
+36 项断言覆盖：文档往返与缺失回退、boot 提示校验与注入（含遮罩）、bundled preset 路由（完整预设）、
 assets 魔数识别/存储/路径校验、Agent 预设列表路由、路由注册、默认主题、v2→v3 迁移、
 德谬歌预设内容与版本同步（保留用户字段与壁纸）、音乐配置归一化（含最小化暂停）、
 文字遮罩 0/150% 的开关与强度、空白文案行的丢弃与占位行、壁纸 CSS 缓存的复用与失效、
 Agent 预设绑定（多选增删/大小写/显示名）与自动切主题、完整预设下载后创建独立主题、
 主题 id 去重、token 双方案取值、壁纸可见度对底色 alpha 与文字对比度的影响、
-文案顺序/随机轮换、文案与壁纸 CSS、**窄屏侧栏与弹窗不透明规则**、**通知设置归一化、完成检测（子会话过滤/冷却）与通知层挂载**、boot hint，以及挂载后修改强调色**立即**反映到 token。
+文案顺序/随机轮换、文案与壁纸 CSS、**窄屏侧栏与弹窗不透明规则**、**通知设置归一化、完成检测（子会话过滤/冷却）与通知层挂载**、**宿主提醒事件采集（审批/计划/workflow）与 SSE 流**、boot hint，以及挂载后修改强调色**立即**反映到 token。
 
 CI（`.github/workflows/test.yml`）在 push / PR 时于 `ubuntu-latest` 跑这两个套件。
 
@@ -345,6 +354,9 @@ CI（`.github/workflows/test.yml`）在 push / PR 时于 `ubuntu-latest` 跑这�
 
 ## 变更记录
 
+- **0.11.0**：消息通知扩展为**审批 / 提问 / 计划确认 / 长任务结束**四类——宿主监听 `approval/request`、
+  `user-questions/request`（含 plan-review）与 `workflow/end`，经 SSE 推送；客户端按类型独立开关、分类徽标与
+  色条，并保留「仅不在前台时提醒」的默认行为。
 - **0.10.0**：新增**消息通知**——Agent 完成回复时（默认仅在你切走/最小化时）弹出赛璐璐风格的应用内卡片，
   可跳回对应会话；可选系统通知、提示音与「前台也提醒」；设置内提供权限状态与测试通知。
 - **0.9.4**：修第三方弹窗的透字——壁纸开启时，`[role="dialog"][aria-modal="true"]`（以及 ds-harness-remote 的
