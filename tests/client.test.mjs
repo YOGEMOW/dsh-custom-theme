@@ -459,6 +459,47 @@ test('the bundled complete preset is offered next to the built-in designs', () =
   assert.ok(ids.includes('demiurge-complete'), 'the bundled complete preset is offered')
 })
 
+test('notification settings normalize with safe defaults', () => {
+  const doc = model.normalizeDocument({ version: 3, themes: [{ id: 't', name: 'T' }] })
+  assert.deepEqual(doc.notify, { enabled: true, cards: true, system: false, sound: false, always: false, durationMs: 6000 })
+
+  const tuned = model.normalizeDocument({
+    version: 3,
+    themes: [{ id: 't', name: 'T' }],
+    notify: { system: true, sound: 'yes', always: 1, durationMs: 999999 },
+  }).notify
+  assert.equal(tuned.system, true)
+  assert.equal(tuned.sound, false)
+  assert.equal(tuned.always, false)
+  assert.equal(tuned.durationMs, 60000)
+
+  const sticky = model.normalizeDocument({
+    version: 3,
+    themes: [{ id: 't', name: 'T' }],
+    notify: { durationMs: -5 },
+  }).notify
+  assert.equal(sticky.durationMs, 0)
+})
+
+test('completion detection filters sub-sessions and applies the cooldown', () => {
+  const before = {
+    root: { id: 'root', running: true },
+    child: { id: 'child', running: true, parentId: 'root' },
+    blank: { id: 'blank', running: true, blank: true },
+    idle: { id: 'idle', running: false },
+  }
+  const current = {
+    root: { id: 'root', running: false, displayTitle: 'Root' },
+    child: { id: 'child', running: false, parentId: 'root' },
+    blank: { id: 'blank', running: false, blank: true },
+    idle: { id: 'idle', running: false },
+  }
+  const cooldown = new Map()
+  const finished = plugin.__notify.collectFinishedSessions(before, current, cooldown, 1000)
+  assert.deepEqual(finished.map((entry) => entry.id), ['root'])
+  assert.deepEqual(plugin.__notify.collectFinishedSessions(before, current, cooldown, 2000), [])
+})
+
 test('mounts, registers the page and applies palette edits immediately', async () => {
   const elements = []
   globalThis.document = {
@@ -564,6 +605,13 @@ test('mounts, registers the page and applies palette edits immediately', async (
   // An unclaimed preset keeps whatever theme the user chose.
   plugin.__agentPresets.observeAgentPreset('cordis')
   assert.equal(plugin.__stores.viewStore.get().doc.activeThemeId, 'agent-theme')
+
+  // The notification stack occupies the frame-wide overlay slot and can push.
+  assert.ok(injections.includes('shell.overlay'), 'the notification layer must occupy shell.overlay')
+  const toastId = plugin.__notify.pushToast({ sessionId: null, title: 'T', detail: 'D' })
+  assert.equal(plugin.__notify.toastStore.get().length, 1)
+  plugin.__notify.dismissToast(toastId)
+  assert.equal(plugin.__notify.toastStore.get().length, 0)
 
   // The bundled complete preset is downloaded through the Host route and lands
   // as an independent theme (no design sync, wallpaper included).

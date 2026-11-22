@@ -235,8 +235,41 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     };
   }
 
+  /* ------------------------------------------------------------------ *
+   * Notifications — ChatGPT-style "reply finished" alerts. Settings live on
+   * the document root (not on a theme): they describe the app, not the look.
+   * ------------------------------------------------------------------ */
+
+  const TOAST_LIMIT = 3;
+  const NOTIFY_COOLDOWN_MS = 10000;
+  const NOTIFY_DEFAULTS = Object.freeze({
+    enabled: true,
+    cards: true,
+    system: false,
+    sound: false,
+    always: false,
+    durationMs: 6000,
+  });
+
+  function defaultNotify() {
+    return { ...NOTIFY_DEFAULTS };
+  }
+
+  function normalizeNotify(input) {
+    const source = input !== null && typeof input === "object" ? input : {};
+    const duration = Number(source.durationMs);
+    return {
+      enabled: source.enabled !== false,
+      cards: source.cards !== false,
+      system: source.system === true,
+      sound: source.sound === true,
+      always: source.always === true,
+      durationMs: Number.isFinite(duration) ? Math.round(clamp(duration, 0, 60000)) : NOTIFY_DEFAULTS.durationMs,
+    };
+  }
+
   function defaultDocument() {
-    return { version: THEME_VERSION, activeThemeId: "everforest", themes: [defaultTheme("everforest", "Everforest")] };
+    return { version: THEME_VERSION, activeThemeId: "everforest", themes: [defaultTheme("everforest", "Everforest")], notify: defaultNotify() };
   }
 
   function normalizePalette(input, fallback) {
@@ -364,7 +397,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     const requested = typeof source.activeThemeId === "string" ? source.activeThemeId : "";
     const activeThemeId = themes.some((theme) => theme.id === requested) ? requested : themes[0].id;
     for (const theme of themes) syncPreset(theme);
-    return { version: THEME_VERSION, activeThemeId, themes };
+    return { version: THEME_VERSION, activeThemeId, themes, notify: normalizeNotify(source.notify) };
   }
 
   function activeTheme(doc) {
@@ -978,6 +1011,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   let copyTag = null;
   let heroDisposer = null;
   const presetWatchers = [];
+  let notifyLayerDisposer = null;
   let saveTimer = null;
   let saveGeneration = 0;
 
@@ -1033,6 +1067,228 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       if (generation !== saveGeneration) return;
       viewStore.patch({ saving: "error", error: error instanceof Error ? error.message : String(error) });
     });
+  }
+
+  /* ------------------------------------------------------------------ *
+   * Toast stack — cel shading: hard ink outlines, flat fills, offset hard
+   * shadows, stepped motion. Every color comes from the active theme tokens,
+   * so the cards follow whatever palette is installed.
+   * ------------------------------------------------------------------ */
+
+  const toastStore = createStore([]);
+  const toastTimers = new Map();
+  let toastSeq = 0;
+  let chimeContext = null;
+
+  function notifySettings() {
+    return normalizeNotify(viewStore.get().doc.notify);
+  }
+
+  /** Whether the viewer is currently away from the app. */
+  function viewerIsAway() {
+    try {
+      if (typeof document === "undefined") return false;
+      if (document.visibilityState === "hidden") return true;
+      return typeof document.hasFocus === "function" ? !document.hasFocus() : false;
+    } catch {
+      return false;
+    }
+  }
+
+  function openSessionById(sessionId) {
+    try {
+      const ctx = ctxRef;
+      const workspace = ctx === null ? undefined : ctx.get?.("uiWorkspace") ?? ctx.uiWorkspace;
+      workspace?.openSession?.(sessionId);
+    } catch {
+      /* navigation is best-effort */
+    }
+  }
+
+  function playChime() {
+    try {
+      const Ctor = window.AudioContext ?? window.webkitAudioContext;
+      if (typeof Ctor !== "function") return;
+      chimeContext ??= new Ctor();
+      const audio = chimeContext;
+      if (audio.state === "suspended") audio.resume().catch(() => {});
+      const start = audio.currentTime;
+      [523.25, 783.99].forEach((frequency, index) => {
+        const oscillator = audio.createOscillator();
+        const gain = audio.createGain();
+        oscillator.type = "triangle";
+        oscillator.frequency.value = frequency;
+        const at = start + index * 0.12;
+        gain.gain.setValueAtTime(0.0001, at);
+        gain.gain.exponentialRampToValueAtTime(0.12, at + 0.012);
+        gain.gain.exponentialRampToValueAtTime(0.0001, at + 0.22);
+        oscillator.connect(gain).connect(audio.destination);
+        oscillator.start(at);
+        oscillator.stop(at + 0.24);
+      });
+    } catch {
+      /* audio is best-effort */
+    }
+  }
+
+  function showSystemNotification(entry) {
+    try {
+      if (typeof Notification === "undefined" || Notification.permission !== "granted") return;
+      const notification = new Notification(entry.title, {
+        body: entry.sessionId === null ? translate("notify.testDetail") : translate("notify.systemBody"),
+        tag: `dsh-custom-theme:${entry.sessionId ?? "test"}`,
+        silent: true,
+      });
+      notification.onclick = () => {
+        try {
+          window.focus();
+        } catch {
+          /* focus is best-effort */
+        }
+        if (entry.sessionId !== null) openSessionById(entry.sessionId);
+        notification.close();
+      };
+    } catch {
+      /* platform without notifications */
+    }
+  }
+
+  function dismissToast(id) {
+    const timer = toastTimers.get(id);
+    if (timer !== undefined) {
+      clearTimeout(timer);
+      toastTimers.delete(id);
+    }
+    toastStore.set(toastStore.get().filter((item) => item.id !== id));
+  }
+
+  function pushToast(input) {
+    const settings = notifySettings();
+    toastSeq += 1;
+    const entry = {
+      id: `toast-${toastSeq}`,
+      sessionId: input.sessionId ?? null,
+      title: input.title ?? translate("notify.testTitle"),
+      detail: input.detail ?? translate("notify.done"),
+    };
+    if (input.card ?? settings.cards) {
+      toastStore.set([...toastStore.get(), entry].slice(-TOAST_LIMIT));
+    }
+    const duration = input.sticky === true ? 0 : settings.durationMs;
+    if (duration > 0) {
+      const timer = setTimeout(() => dismissToast(entry.id), duration);
+      if (typeof timer === "object" && timer !== null && typeof timer.unref === "function") timer.unref();
+      toastTimers.set(entry.id, timer);
+    }
+    if (settings.sound) playChime();
+    if (settings.system) showSystemNotification(entry);
+    return entry.id;
+  }
+
+  function sessionTitle(entry) {
+    if (typeof entry.displayTitle === "string" && entry.displayTitle !== "") return entry.displayTitle;
+    if (typeof entry.title === "string" && entry.title !== "") return entry.title;
+    if (typeof entry.cwd === "string" && entry.cwd !== "") {
+      const parts = entry.cwd.split(/[\\/]+/u).filter((part) => part !== "");
+      if (parts.length > 0) return parts[parts.length - 1];
+    }
+    return String(entry.id ?? "").slice(0, 8);
+  }
+
+  function currentNotificationPermission() {
+    try {
+      return typeof Notification === "undefined" ? "unsupported" : Notification.permission;
+    } catch {
+      return "unsupported";
+    }
+  }
+
+  function ToastCard({ item }) {
+    const t = (key) => translate(key);
+    return h("div", { className: "ts-toast", role: "status" },
+      h("span", { className: "ts-toastStripe", "aria-hidden": true }),
+      h("div", { className: "ts-toastBody" },
+        h("div", { className: "ts-toastTop" },
+          h("span", { className: "ts-toastBadge" }, t("notify.badge")),
+          h("span", { className: "ts-toastTime" }, t("notify.now"))),
+        h("div", { className: "ts-toastTitle" }, item.title),
+        h("div", { className: "ts-toastDetail" }, item.detail),
+        h("div", { className: "ts-toastActions" },
+          item.sessionId === null
+            ? null
+            : h("button", {
+              type: "button",
+              className: "ts-toastOpen",
+              onClick: () => {
+                try {
+                  window.focus();
+                } catch {
+                  /* focus is best-effort */
+                }
+                openSessionById(item.sessionId);
+                dismissToast(item.id);
+              },
+            }, t("notify.open")),
+          h("button", {
+            type: "button",
+            className: "ts-toastClose",
+            "aria-label": t("notify.close"),
+            onClick: () => dismissToast(item.id),
+          }, "\u00d7"))));
+  }
+
+  /**
+   * Pure transition scan: root sessions that stopped running since the previous
+   * snapshot. Sub-agents, blank sessions and the per-session cooldown are
+   * filtered here so the behavior is testable without a live Session store.
+   */
+  function collectFinishedSessions(before, current, lastNotified, now) {
+    const finished = [];
+    if (before === null || before === undefined) return finished;
+    for (const entry of Object.values(current ?? {})) {
+      if (entry === null || typeof entry !== "object") continue;
+      if (entry.running !== false || entry.blank === true) continue;
+      if (entry.parentId !== undefined && entry.parentId !== null) continue;
+      if (entry.origin === "subagent") continue;
+      const prior = before[entry.id];
+      if (prior === undefined || prior.running !== true) continue;
+      if (now - (lastNotified.get(entry.id) ?? Number.NEGATIVE_INFINITY) < NOTIFY_COOLDOWN_MS) continue;
+      lastNotified.set(entry.id, now);
+      finished.push(entry);
+    }
+    return finished;
+  }
+
+  /** Root overlay occupant: watches session completions and draws the stack. */
+  function NotifyLayer({ useSessions }) {
+    const byId = typeof useSessions === "function" ? useSessions((state) => state.byId) : null;
+    const previous = useRef(null);
+    const lastNotified = useRef(new Map());
+    const toasts = useSyncExternalStore(toastStore.subscribe, toastStore.get);
+
+    useEffect(() => {
+      const current = byId ?? {};
+      const before = previous.current;
+      previous.current = current;
+      if (before === null) return; // baseline: never alert about what was already finished
+      const settings = notifySettings();
+      if (!settings.enabled) return;
+      if (!settings.cards && !settings.system) return;
+      if (!settings.always && viewerIsAway() === false) return;
+      const finished = collectFinishedSessions(before, current, lastNotified.current, Date.now());
+      for (const entry of finished) {
+        pushToast({
+          sessionId: entry.id,
+          title: sessionTitle(entry),
+          detail: translate("notify.done"),
+          card: settings.cards,
+        });
+      }
+    }, [byId]);
+
+    if (toasts.length === 0) return null;
+    return h("div", { className: "ts-toastLayer" },
+      toasts.map((item) => h(ToastCard, { key: item.id, item })));
   }
 
   /** Hero image occupant for the blank-session brand mark. */
@@ -1108,6 +1364,20 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       } catch {
         /* slot missing in this build: the other one may still exist */
       }
+    }
+  }
+
+  /** Frame-wide overlay seat for the notification stack. */
+  function syncNotifyLayer() {
+    const ctx = ctxRef;
+    if (ctx === null || notifyLayerDisposer !== null) return;
+    try {
+      notifyLayerDisposer = ctx.slots.inject("shell.overlay", () => ctx.slots.register(
+        { name: "shell.overlay", id: "theme-notify", order: 40 },
+        NotifyLayer,
+      ));
+    } catch {
+      /* overlay slot missing in this build */
     }
   }
 
@@ -1266,6 +1536,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
 
     syncHeroSlot();
     syncPresetWatcher();
+    syncNotifyLayer();
     syncMusic(theme);
     document.documentElement.setAttribute(READY_ATTR, "");
   }
@@ -1880,6 +2151,10 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     const [roster, setRoster] = useState({ state: "loading", presets: [] });
     const [rosterToken, setRosterToken] = useState(0);
     const [presetPanel, setPresetPanel] = useState("");
+    const [permission, setPermission] = useState(currentNotificationPermission);
+    useEffect(() => {
+      setPermission(currentNotificationPermission());
+    }, []);
 
     useEffect(() => {
       let cancelled = false;
@@ -1902,6 +2177,34 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     const setHero = (patch) => editTheme((item) => ({ ...item, hero: { ...item.hero, ...patch } }));
     const setCopy = (field, next) => editTheme((item) => ({ ...item, copy: { ...item.copy, [field]: next } }));
     const setMusic = (patch) => editTheme((item) => ({ ...item, music: { ...item.music, ...patch } }));
+    const notify = view.doc.notify ?? defaultNotify();
+    const setNotify = (patch) => edit((doc) => ({
+      ...doc,
+      notify: { ...normalizeNotify(doc.notify), ...patch },
+    }));
+    const permissionText = {
+      granted: t("notify.permission.granted"),
+      denied: t("notify.permission.denied"),
+      default: t("notify.permission.default"),
+      unsupported: t("notify.permission.unsupported"),
+    }[permission] ?? t("notify.permission.default");
+    const requestNotificationPermission = () => {
+      try {
+        if (typeof Notification === "undefined" || typeof Notification.requestPermission !== "function") return;
+        Notification.requestPermission().then((state) => {
+          setPermission(state);
+          if (state === "granted") setNotify({ system: true });
+        }).catch(() => {});
+      } catch {
+        /* ignore */
+      }
+    };
+    const sendTestToast = () => pushToast({
+      sessionId: null,
+      title: t("notify.testTitle"),
+      detail: t("notify.testDetail"),
+      card: true,
+    });
     const togglePreset = (themeId, presetId) => {
       edit((doc) => ({
         ...doc,
@@ -2002,6 +2305,60 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
         h("div", { className: "ts-presetDetected" },
           t("presetLink.detected"),
           h("span", { className: "ts-copyPreviewValue" }, lastAgentPreset === "" ? "—" : lastAgentPreset))),
+
+      h(Group, { label: t("group.notify") },
+        h("div", { className: "ts-copyNote" }, t("notify.hint")),
+        h(Row, { title: t("notify.enabled"), description: t("notify.enabled.desc") },
+          h(Switch, {
+            checked: notify.enabled,
+            onChange: (enabled) => setNotify({ enabled }),
+            label: t("notify.enabled"),
+          })),
+        h(Row, { title: t("notify.cards"), description: t("notify.cards.desc") },
+          h(Switch, {
+            checked: notify.cards,
+            onChange: (cards) => setNotify({ cards }),
+            label: t("notify.cards"),
+          })),
+        h(Row, { title: t("notify.system"), description: t("notify.system.desc") },
+          h(Switch, {
+            checked: notify.system,
+            onChange: (system) => setNotify({ system }),
+            label: t("notify.system"),
+          })),
+        h(Row, { title: t("notify.permission"), description: t("notify.permission.desc") },
+          h("div", { className: "ts-inlineControls" },
+            h("span", { className: "ts-permission", "data-state": permission }, permissionText),
+            permission === "default"
+              ? h("button", {
+                type: "button",
+                className: "ts-link",
+                onClick: requestNotificationPermission,
+              }, t("notify.permission.request"))
+              : null)),
+        h(Row, { title: t("notify.sound") },
+          h(Switch, {
+            checked: notify.sound,
+            onChange: (sound) => setNotify({ sound }),
+            label: t("notify.sound"),
+          })),
+        h(Row, { title: t("notify.always"), description: t("notify.always.desc") },
+          h(Switch, {
+            checked: notify.always,
+            onChange: (always) => setNotify({ always }),
+            label: t("notify.always"),
+          })),
+        h(Row, { title: t("notify.duration"), description: t("notify.duration.desc") },
+          h(RangeField, {
+            value: notify.durationMs, min: 0, max: 20000, suffix: "ms",
+            onChange: (durationMs) => setNotify({ durationMs }),
+          })),
+        h(Row, { title: t("notify.test") },
+          h("button", {
+            type: "button",
+            className: "ts-btn ts-btnSmall",
+            onClick: sendTestToast,
+          }, t("notify.test")))),
 
       h(Group, { label: t("group.style") },
         h(Row, { title: t("mode.title"), description: t("mode.desc") },
@@ -2280,6 +2637,36 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "music.loop": "循环播放",
     "music.pauseHidden": "最小化时暂停",
     "music.pauseHidden.desc": "窗口最小化或切到后台时暂停，回到界面继续播放",
+    "group.notify": "消息通知",
+    "notify.hint": "Agent 完成一轮回复时提醒你（类似 ChatGPT）。默认只在你切走或最小化时提醒；点卡片可回到对应会话。",
+    "notify.enabled": "启用消息通知",
+    "notify.enabled.desc": "关闭后不再弹出任何完成提醒",
+    "notify.cards": "应用内卡片",
+    "notify.cards.desc": "右下角弹出赛璐璐风格的通知卡片",
+    "notify.system": "系统通知",
+    "notify.system.desc": "同时调用操作系统通知中心（需要授权）",
+    "notify.permission": "通知权限",
+    "notify.permission.desc": "浏览器 / 系统里报告的通知授权状态",
+    "notify.permission.request": "请求授权",
+    "notify.permission.granted": "已授权",
+    "notify.permission.denied": "已拒绝，请在系统设置中恢复",
+    "notify.permission.default": "未授权",
+    "notify.permission.unsupported": "当前环境不支持",
+    "notify.sound": "提示音",
+    "notify.always": "窗口在前台时也提醒",
+    "notify.always.desc": "默认只在你切走或最小化时提醒",
+    "notify.duration": "卡片停留",
+    "notify.duration.desc": "0 = 常驻，需手动关闭",
+    "notify.test": "发送测试通知",
+    "notify.testTitle": "测试通知",
+    "notify.testDetail": "这是一条示例提醒，用来检查赛璐璐卡片的样式。",
+    "notify.badge": "回复完成",
+    "notify.now": "刚刚",
+    "notify.done": "Agent 已完成这一轮回复",
+    "notify.open": "回到会话",
+    "notify.close": "关闭通知",
+    "notify.systemBody": "点击回到 DSH 查看",
+
     "status.saving": "保存中…",
     "status.saved": "已保存",
     "status.error": "保存失败：",
@@ -2415,6 +2802,36 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "music.loop": "Loop",
     "music.pauseHidden": "Pause when minimized",
     "music.pauseHidden.desc": "Pause while the window is minimized or in the background, resume when it returns",
+    "group.notify": "Notifications",
+    "notify.hint": "Alert you when an Agent finishes a reply (ChatGPT-style). By default it only fires while DSH is in the background or minimized; clicking a card jumps back to that session.",
+    "notify.enabled": "Enable notifications",
+    "notify.enabled.desc": "Turn off to silence every completion alert",
+    "notify.cards": "In-app cards",
+    "notify.cards.desc": "Cel-shaded cards in the bottom-right corner",
+    "notify.system": "System notifications",
+    "notify.system.desc": "Also post to the operating system notification center (permission required)",
+    "notify.permission": "Notification permission",
+    "notify.permission.desc": "Permission state reported by the browser or OS",
+    "notify.permission.request": "Request permission",
+    "notify.permission.granted": "granted",
+    "notify.permission.denied": "denied — restore it in system settings",
+    "notify.permission.default": "not granted",
+    "notify.permission.unsupported": "unsupported here",
+    "notify.sound": "Chime",
+    "notify.always": "Notify even when DSH is focused",
+    "notify.always.desc": "Off by default: alerts only while you are elsewhere",
+    "notify.duration": "Card dwell time",
+    "notify.duration.desc": "0 keeps the card until you close it",
+    "notify.test": "Send test notification",
+    "notify.testTitle": "Test notification",
+    "notify.testDetail": "A sample alert you can use to check the cel-shaded card.",
+    "notify.badge": "Reply done",
+    "notify.now": "just now",
+    "notify.done": "The Agent finished this reply",
+    "notify.open": "Open session",
+    "notify.close": "Dismiss notification",
+    "notify.systemBody": "Click to return to DSH",
+
     "status.saving": "Saving…",
     "status.saved": "Saved",
     "status.error": "Save failed: ",
@@ -2529,7 +2946,29 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
 .ts-status{color:var(--dsw-alias-label-tertiary);font-size:12px}
 .ts-statusError{color:var(--dsw-alias-state-error-primary)}
 .ts-hero-art{user-select:none;-webkit-user-drag:none}
-@media (max-width:720px){.ts-control{max-width:50%}.ts-inputWide{width:100%}}
+.ts-toastLayer{position:fixed;right:20px;bottom:20px;z-index:2147482000;display:flex;flex-direction:column;gap:12px;max-width:min(380px,calc(100vw - 40px));pointer-events:none}
+.ts-toast{pointer-events:auto;position:relative;display:flex;background:var(--dsw-alias-bg-layer-1);color:var(--dsw-alias-label-primary);border:2px solid var(--dsw-alias-label-primary);border-radius:14px;box-shadow:5px 5px 0 var(--dsw-alias-label-primary);overflow:hidden;animation:ts-toastIn .16s steps(3,end) both}
+.ts-toast:hover{transform:translate(-1px,-1px);box-shadow:6px 6px 0 var(--dsw-alias-label-primary)}
+.ts-toastStripe{width:10px;flex:none;background:var(--dsw-alias-brand-primary);border-right:2px solid var(--dsw-alias-label-primary)}
+.ts-toastBody{flex:1;min-width:0;padding:12px 14px 10px 12px;display:flex;flex-direction:column;gap:6px}
+.ts-toastTop{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.ts-toastBadge{font-size:10px;font-weight:700;letter-spacing:.08em;text-transform:uppercase;line-height:14px;padding:2px 7px;border-radius:6px;border:2px solid var(--dsw-alias-label-primary);background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-layer-1)}
+.ts-toastTime{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary)}
+.ts-toastTitle{font-size:14px;line-height:20px;font-weight:700;overflow-wrap:anywhere}
+.ts-toastDetail{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary)}
+.ts-toastActions{display:flex;align-items:center;gap:8px;margin-top:2px}
+.ts-toastOpen{appearance:none;border:2px solid var(--dsw-alias-label-primary);border-radius:8px;background:var(--dsw-alias-label-primary);color:var(--dsw-alias-bg-layer-1);font:inherit;font-size:12px;font-weight:700;line-height:18px;padding:2px 10px 3px;cursor:pointer;box-shadow:2px 2px 0 var(--dsw-alias-label-primary)}
+.ts-toastOpen:hover{transform:translate(-1px,-1px);box-shadow:3px 3px 0 var(--dsw-alias-label-primary)}
+.ts-toastOpen:active{transform:translate(2px,2px);box-shadow:none}
+.ts-toastClose{margin-left:auto;appearance:none;width:24px;height:24px;display:grid;place-items:center;padding:0;border:2px solid var(--dsw-alias-label-primary);border-radius:8px;background:transparent;color:var(--dsw-alias-label-primary);font:inherit;font-size:14px;font-weight:700;line-height:1;cursor:pointer}
+.ts-toastClose:hover{background:var(--dsw-alias-interactive-bg-hover)}
+@keyframes ts-toastIn{from{opacity:0;transform:translate(14px,10px)}to{opacity:1;transform:none}}
+@media (prefers-reduced-motion:reduce){.ts-toast{animation:none}.ts-toast:hover,.ts-toastOpen:hover{transform:none}}
+.ts-inlineControls{display:flex;align-items:center;gap:12px}
+.ts-permission{font-size:12px;line-height:18px;padding:1px 8px;border:2px solid var(--dsw-alias-border-l2);border-radius:8px;color:var(--dsw-alias-label-secondary)}
+.ts-permission[data-state="granted"]{border-color:var(--dsw-alias-state-success-primary);color:var(--dsw-alias-state-success-primary)}
+.ts-permission[data-state="denied"]{border-color:var(--dsw-alias-state-error-primary);color:var(--dsw-alias-state-error-primary)}
+@media (max-width:720px){.ts-control{max-width:50%}.ts-inputWide{width:100%}.ts-toastLayer{right:12px;bottom:12px;max-width:calc(100vw - 24px)}}
 `;
 
   /* ------------------------------------------------------------------ *
@@ -2595,6 +3034,15 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
       }
       while (presetWatchers.length > 0) {
         const dispose = presetWatchers.pop();
+        try {
+          dispose();
+        } catch {
+          /* already disposed with the plugin context */
+        }
+      }
+      if (notifyLayerDisposer !== null) {
+        const dispose = notifyLayerDisposer;
+        notifyLayerDisposer = null;
         try {
           dispose();
         } catch {
@@ -2695,5 +3143,6 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
   exports.__applyView = applyView;
   exports.__themeOps = { addTheme, duplicateTheme, removeTheme, setActiveTheme, addPreset };
   exports.__agentPresets = { observeAgentPreset };
+  exports.__notify = { pushToast, dismissToast, toastStore, normalizeNotify, defaultNotify, collectFinishedSessions };
   return module.exports;
 } });
