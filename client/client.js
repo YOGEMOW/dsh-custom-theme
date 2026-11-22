@@ -2851,7 +2851,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "notify.system.state.unsupported": "当前环境不支持",
     "notify.system.state.permission": "未授权，请先请求授权",
     "notify.system.state.error": "发送失败",
-    "notify.system.desktopNote": "提示：DSH 桌面端没有向 Windows 注册通知身份（系统通知设置里看不到 DeepSeek Harness），系统 toast 可能被系统丢弃；应用内卡片不受影响。需要跨应用置顶提醒可安装 dsh-popup-cards。",
+    "notify.system.desktopNote": "提示：首次开启后如果系统通知没出现，重启一次 DSH 再试；也请确认 Windows 通知与免打扰设置允许 DeepSeek Harness。需要跨应用置顶提醒也可安装 dsh-popup-cards。",
 
     "notify.permission": "通知权限",
     "notify.permission.desc": "浏览器 / 系统里报告的通知授权状态",
@@ -3039,7 +3039,7 @@ window.__ModuleLoader__.load({ id: "dsh-custom-theme", factory: (require) => {
     "notify.system.state.unsupported": "unsupported here",
     "notify.system.state.permission": "not granted — request permission first",
     "notify.system.state.error": "failed to send",
-    "notify.system.desktopNote": "Note: DSH Desktop does not register a Windows notification identity (DeepSeek Harness is absent from the system notification list), so OS toasts may be dropped; in-app cards are unaffected. Install dsh-popup-cards for cross-app topmost alerts.",
+    "notify.system.desktopNote": "Note: if an OS toast does not appear after enabling this, restart DSH once and make sure Windows notifications and Focus Assist allow DeepSeek Harness. dsh-popup-cards remains an option for cross-app topmost alerts.",
 
     "notify.permission": "Notification permission",
     "notify.permission.desc": "Permission state reported by the browser or OS",
